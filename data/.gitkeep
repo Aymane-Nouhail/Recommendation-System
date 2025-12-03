@@ -1,0 +1,8 @@
+# Data Directory
+
+This directory contains:
+- Raw Amazon Reviews JSONL files
+- Cleaned and processed datasets
+- Train/validation/test splits
+
+Place your Amazon Reviews dataset here as `reviews.jsonl`
