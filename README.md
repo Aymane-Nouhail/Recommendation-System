@@ -316,10 +316,13 @@ python -m src.api.server
 
 # References
 
-* Kingma & Welling (2014). Auto-Encoding Variational Bayes
-* Liang et al. (2018). Variational Autoencoders for Collaborative Filtering
-* He et al. (2020). LightGCN
-* Reimers & Gurevych (2019). Sentence-BERT
+1. Kingma, D. P., & Welling, M. (2014). **[Auto-Encoding Variational Bayes](https://arxiv.org/abs/1312.6114)**. In *Proceedings of the 2nd International Conference on Learning Representations (ICLR)*.
+
+2. Liang, D., Krishnan, R. G., Hoffman, M. D., & Jebara, T. (2018). **[Variational Autoencoders for Collaborative Filtering](https://arxiv.org/abs/1802.05814)**. In *Proceedings of the 2018 World Wide Web Conference (WWW '18)*, pp. 689–698.
+
+3. He, X., Deng, K., Wang, X., Li, Y., Zhang, Y., & Wang, M. (2020). **[LightGCN: Simplifying and Powering Graph Convolution Network for Recommendation](https://arxiv.org/abs/2002.02126)**. In *Proceedings of the 43rd International ACM SIGIR Conference on Research and Development in Information Retrieval (SIGIR '20)*, pp. 639–648.
+
+4. Reimers, N., & Gurevych, I. (2019). **[Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks](https://arxiv.org/abs/1908.10084)**. In *Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing (EMNLP '19)*.
 
 ---
 
