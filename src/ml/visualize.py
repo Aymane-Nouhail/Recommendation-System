@@ -29,11 +29,33 @@ COLORS = ["#2ecc71", "#3498db", "#9b59b6", "#e74c3c", "#f39c12"]
 STYLE = "seaborn-v0_8-whitegrid"
 
 
-def _save_figure(fig: Figure, path: Path, name: str) -> None:
-    """Save figure and log."""
-    fig.savefig(path / name, dpi=150, bbox_inches="tight")
+def _get_dataset_name() -> str:
+    """Extract dataset name from RAW_DATA_FILE in config (readable format)."""
+    raw_file = getattr(config, "RAW_DATA_FILE", "")
+    if raw_file:
+        # Extract name from filename like "All_Beauty.jsonl" -> "All_Beauty"
+        name = Path(raw_file).stem
+        # Make it more readable: "All_Beauty" -> "All Beauty"
+        return name.replace("_", " ")
+    return ""
+
+
+def _get_dataset_prefix() -> str:
+    """Extract dataset name from RAW_DATA_FILE in config (snake_case for filenames)."""
+    raw_file = getattr(config, "RAW_DATA_FILE", "")
+    if raw_file:
+        # Extract name from filename like "All_Beauty.jsonl" -> "all_beauty"
+        name = Path(raw_file).stem.lower()
+        return f"{name}_"
+    return ""
+
+
+def _save_figure(fig: Figure, path: Path, name: str, prefix: str = "") -> None:
+    """Save figure with optional prefix and log."""
+    filename = f"{prefix}{name}" if prefix else name
+    fig.savefig(path / filename, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logger.info(f"Saved {name} to {path}")
+    logger.info(f"Saved {filename} to {path}")
 
 
 def _get_device() -> torch.device:
@@ -56,11 +78,19 @@ def plot_training_curves(
     train_recon_losses: list[float],
     train_kl_losses: list[float],
     output_path: Path,
+    dataset_name: str = "",
+    model_name: str = "HybridVAE",
+    file_prefix: str = "",
 ) -> None:
     """Generate training visualization plots."""
     plt.style.use(STYLE)
     epochs = range(1, len(train_losses) + 1)
     best_epoch = val_losses.index(min(val_losses)) + 1
+
+    # Build title prefix: "Dataset - Model" or just "Model" or just "Dataset"
+    prefix_parts = [p for p in [dataset_name, model_name] if p]
+    title_prefix = " - ".join(prefix_parts)
+    title_prefix = f"{title_prefix}: " if title_prefix else ""
 
     # Plot 1: Training vs Validation Loss
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -69,11 +99,11 @@ def plot_training_curves(
     ax.axvline(
         x=best_epoch, color="green", linestyle="--", alpha=0.7, label=f"Best (epoch {best_epoch})"
     )
-    ax.set(xlabel="Epoch", ylabel="Loss", title="Training vs Validation Loss")
+    ax.set(xlabel="Epoch", ylabel="Loss", title=f"{title_prefix}Training vs Validation Loss")
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
-    _save_figure(fig, output_path, "loss_curves.png")
+    _save_figure(fig, output_path, "loss_curves.png", file_prefix)
 
     # Plot 2: Loss Components
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -82,12 +112,12 @@ def plot_training_curves(
     ax.set(
         xlabel="Epoch",
         ylabel="Loss Component",
-        title="Loss Components: Reconstruction vs KL Divergence",
+        title=f"{title_prefix}Loss Components (Reconstruction vs KL)",
     )
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
-    _save_figure(fig, output_path, "loss_components.png")
+    _save_figure(fig, output_path, "loss_components.png", file_prefix)
 
     # Plot 3: Combined 2x2 Summary
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -125,9 +155,9 @@ def plot_training_curves(
     )
     axes[1, 1].grid(True, alpha=0.3)
 
-    plt.suptitle("HybridVAE Training Summary", fontsize=16, fontweight="bold", y=1.02)
+    plt.suptitle(f"{title_prefix}Training Summary", fontsize=16, fontweight="bold", y=1.02)
     plt.tight_layout()
-    _save_figure(fig, output_path, "training_summary.png")
+    _save_figure(fig, output_path, "training_summary.png", file_prefix)
 
 
 def plot_latent_space(
@@ -136,6 +166,9 @@ def plot_latent_space(
     embeddings_path: Path,
     output_path: Path,
     n_samples: int = 2000,
+    dataset_name: str = "",
+    model_name: str = "HybridVAE",
+    file_prefix: str = "",
 ) -> None:
     """Visualize learned latent space using t-SNE and PCA."""
     from src.ml.model import HybridVAE
@@ -200,6 +233,11 @@ def plot_latent_space(
         user_embeddings
     )
 
+    # Build title prefix: "Dataset - Model" or just "Model" or just "Dataset"
+    prefix_parts = [p for p in [dataset_name, model_name] if p]
+    title_prefix = " - ".join(prefix_parts)
+    title_prefix = f"{title_prefix}: " if title_prefix else ""
+
     # Individual plots
     for name, result, labels in [
         (
@@ -208,10 +246,14 @@ def plot_latent_space(
             (
                 f"PC1 ({pca.explained_variance_ratio_[0]:.1%} var)",
                 f"PC2 ({pca.explained_variance_ratio_[1]:.1%} var)",
-                "User Latent Space (PCA)",
+                f"{title_prefix}User Latent Space (PCA)",
             ),
         ),
-        ("latent_space_tsne.png", tsne_result, ("t-SNE 1", "t-SNE 2", "User Latent Space (t-SNE)")),
+        (
+            "latent_space_tsne.png",
+            tsne_result,
+            ("t-SNE 1", "t-SNE 2", f"{title_prefix}User Latent Space (t-SNE)"),
+        ),
     ]:
         fig, ax = plt.subplots(figsize=(10, 8))
         scatter = ax.scatter(
@@ -220,7 +262,7 @@ def plot_latent_space(
         plt.colorbar(scatter, ax=ax, label="Log(1 + #Interactions)")
         ax.set(xlabel=labels[0], ylabel=labels[1], title=labels[2])
         plt.tight_layout()
-        _save_figure(fig, output_path, name)
+        _save_figure(fig, output_path, name, file_prefix)
 
     # Combined figure
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
@@ -242,9 +284,9 @@ def plot_latent_space(
         ax.set(xlabel=labels[0], ylabel=labels[1], title=labels[2])
         plt.colorbar(scatter, ax=ax, label="Log(1 + #Interactions)")
 
-    plt.suptitle("User Latent Space Visualization", fontsize=14, fontweight="bold")
+    plt.suptitle(f"{title_prefix}User Latent Space Visualization", fontsize=14, fontweight="bold")
     plt.tight_layout()
-    _save_figure(fig, output_path, "latent_space_combined.png")
+    _save_figure(fig, output_path, "latent_space_combined.png", file_prefix)
 
 
 # =============================================================================
@@ -257,9 +299,13 @@ def plot_baseline_comparison(
     k_values: list[int],
     output_path: Path,
     n_negatives: int | None = 99,
+    dataset_name: str = "",
+    file_prefix: str = "",
 ) -> None:
     """Generate baseline comparison visualizations."""
     plt.style.use(STYLE)
+    # Build title prefix: "Dataset: " for baseline comparisons (multiple models)
+    title_prefix = f"{dataset_name}: " if dataset_name else ""
     models = list(all_results.keys())
     protocol = f"Negative Sampling ({n_negatives})" if n_negatives else "Full Ranking"
     x = np.arange(len(k_values))
@@ -278,14 +324,14 @@ def plot_baseline_comparison(
         ax.set(
             xlabel="K",
             ylabel=f"{metric.replace('_', ' ').title()}@K",
-            title=f"{metric.replace('_', ' ').title()}@K Comparison ({protocol})",
+            title=f"{title_prefix}{metric.replace('_', ' ').title()}@K Comparison ({protocol})",
         )
         ax.set_xticks(x + width)
         ax.set_xticklabels([f"@{k}" for k in k_values])
         ax.legend(fontsize=11)
         ax.grid(True, alpha=0.3, axis="y")
         plt.tight_layout()
-        _save_figure(fig, output_path, filename)
+        _save_figure(fig, output_path, filename, file_prefix)
 
     # Combined summary (2x2)
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -326,9 +372,14 @@ def plot_baseline_comparison(
     axes[1, 1].legend()
     axes[1, 1].grid(True, alpha=0.3)
 
-    plt.suptitle(f"Baseline Models Comparison ({protocol})", fontsize=16, fontweight="bold", y=1.02)
+    plt.suptitle(
+        f"{title_prefix}Baseline Models Comparison ({protocol})",
+        fontsize=16,
+        fontweight="bold",
+        y=1.02,
+    )
     plt.tight_layout()
-    _save_figure(fig, output_path, "baseline_summary.png")
+    _save_figure(fig, output_path, "baseline_summary.png", file_prefix)
 
 
 # =============================================================================
@@ -336,9 +387,19 @@ def plot_baseline_comparison(
 # =============================================================================
 
 
-def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
+def plot_grid_search_results(
+    results_path: Path,
+    output_path: Path,
+    dataset_name: str = "",
+    model_name: str = "HybridVAE",
+    file_prefix: str = "",
+) -> None:
     """Generate grid search visualizations."""
     plt.style.use(STYLE)
+    # Build title prefix: "Dataset - Model" for grid search
+    prefix_parts = [p for p in [dataset_name, model_name] if p]
+    title_prefix = " - ".join(prefix_parts)
+    title_prefix = f"{title_prefix}: " if title_prefix else ""
 
     with open(results_path) as f:
         data = json.load(f)
@@ -352,10 +413,20 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
     ndcg_scores = [r["ndcg@10"] for r in all_results]
     recall_scores = [r["recall@10"] for r in all_results]
 
-    # Plot 1: Top 10 configurations
+    # Plot 1: Top 10 configurations with meaningful labels
     sorted_results = sorted(all_results, key=lambda r: r["ndcg@10"], reverse=True)[:10]
-    fig, ax = plt.subplots(figsize=(12, 6))
-    labels = [f"Config {i+1}" for i in range(len(sorted_results))]
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    # Create meaningful labels from config
+    def config_label(cfg: dict) -> str:
+        latent = cfg.get("latent_dim", "?")
+        hidden = cfg.get("hidden_dims", [])
+        hidden_str = "x".join(map(str, hidden)) if hidden else "?"
+        dropout = cfg.get("dropout", "?")
+        beta = cfg.get("beta", "?")
+        return f"L{latent}\nH{hidden_str}\nd{dropout}\nβ{beta}"
+
+    labels = [config_label(r["config"]) for r in sorted_results]
     x = np.arange(len(labels))
     width = 0.35
 
@@ -374,10 +445,12 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
         color="#2ecc71",
     )
     ax.set(
-        xlabel="Configuration Rank", ylabel="Score", title="Top 10 Hyperparameter Configurations"
+        xlabel="Configuration (L=latent, H=hidden, d=dropout, β=beta)",
+        ylabel="Score",
+        title=f"{title_prefix}Top 10 Hyperparameter Configurations",
     )
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_xticklabels(labels, fontsize=8)
     ax.legend()
     ax.grid(True, alpha=0.3, axis="y")
 
@@ -392,7 +465,7 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
         )
 
     plt.tight_layout()
-    _save_figure(fig, output_path, "grid_search_top_configs.png")
+    _save_figure(fig, output_path, "grid_search_top_configs.png", file_prefix)
 
     # Plot 2: Parameter impact (box plots)
     param_names = list(configs[0].keys())
@@ -420,9 +493,11 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
     for idx in range(n_params, 6):
         axes[idx].set_visible(False)
 
-    plt.suptitle("Hyperparameter Impact on NDCG@10", fontsize=16, fontweight="bold", y=1.02)
+    plt.suptitle(
+        f"{title_prefix}Hyperparameter Impact on NDCG@10", fontsize=16, fontweight="bold", y=1.02
+    )
     plt.tight_layout()
-    _save_figure(fig, output_path, "grid_search_param_impact.png")
+    _save_figure(fig, output_path, "grid_search_param_impact.png", file_prefix)
 
     # Plot 3: Heatmap (latent_dim vs beta)
     if "latent_dim" in param_names and "beta" in param_names:
@@ -447,7 +522,7 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
         ax.set(
             xlabel="Beta (KL Weight)",
             ylabel="Latent Dimension",
-            title="Average NDCG@10: Latent Dim vs Beta",
+            title=f"{title_prefix}Average NDCG@10 (Latent Dim vs Beta)",
         )
 
         for i in range(len(latent_dims)):
@@ -456,7 +531,7 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
 
         plt.colorbar(im, ax=ax, label="NDCG@10")
         plt.tight_layout()
-        _save_figure(fig, output_path, "grid_search_heatmap.png")
+        _save_figure(fig, output_path, "grid_search_heatmap.png", file_prefix)
 
     # Plot 4: Scatter with best config
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -472,7 +547,11 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
         label="Best Config",
         zorder=5,
     )
-    ax.set(xlabel="Recall@10", ylabel="NDCG@10", title="Grid Search Results: Recall vs NDCG")
+    ax.set(
+        xlabel="Recall@10",
+        ylabel="NDCG@10",
+        title=f"{title_prefix}Grid Search Results (Recall vs NDCG)",
+    )
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -487,12 +566,14 @@ def plot_grid_search_results(results_path: Path, output_path: Path) -> None:
     )
 
     plt.tight_layout()
-    _save_figure(fig, output_path, "grid_search_scatter.png")
+    _save_figure(fig, output_path, "grid_search_scatter.png", file_prefix)
 
 
 # =============================================================================
 # CLI Entry Points
 # =============================================================================
+
+MODEL_NAME = "HybridVAE"
 
 
 def visualize_training(model_dir: str, data_dir: str, embeddings_path: str) -> None:
@@ -500,6 +581,10 @@ def visualize_training(model_dir: str, data_dir: str, embeddings_path: str) -> N
     model_path = Path(model_dir)
     figures_path = model_path / "figures"
     figures_path.mkdir(parents=True, exist_ok=True)
+
+    # Get dataset name and file prefix from config
+    dataset_name = _get_dataset_name()
+    file_prefix = _get_dataset_prefix()
 
     history_path = model_path / "training_history.json"
     if not history_path.exists():
@@ -516,12 +601,23 @@ def visualize_training(model_dir: str, data_dir: str, embeddings_path: str) -> N
         history["train_recon_losses"],
         history["train_kl_losses"],
         figures_path,
+        dataset_name=dataset_name,
+        model_name=MODEL_NAME,
+        file_prefix=file_prefix,
     )
 
     best_model = model_path / "best_model.pth"
     if best_model.exists():
         logger.info("Generating latent space visualizations...")
-        plot_latent_space(best_model, Path(data_dir), Path(embeddings_path), figures_path)
+        plot_latent_space(
+            best_model,
+            Path(data_dir),
+            Path(embeddings_path),
+            figures_path,
+            dataset_name=dataset_name,
+            model_name=MODEL_NAME,
+            file_prefix=file_prefix,
+        )
     else:
         logger.warning(f"Model not found: {best_model}, skipping latent space plots")
 
@@ -532,6 +628,10 @@ def visualize_baselines(model_dir: str) -> None:
     """Generate baseline comparison visualizations."""
     figures_path = Path(model_dir) / "figures"
     figures_path.mkdir(parents=True, exist_ok=True)
+
+    # Get dataset name and file prefix from config
+    dataset_name = _get_dataset_name()
+    file_prefix = _get_dataset_prefix()
 
     results_path = figures_path / "baseline_results.json"
     if not results_path.exists():
@@ -545,7 +645,9 @@ def visualize_baselines(model_dir: str) -> None:
     k_values = sorted(next(iter(results.values())).keys())
 
     logger.info("Generating baseline comparison visualizations...")
-    plot_baseline_comparison(results, k_values, figures_path)
+    plot_baseline_comparison(
+        results, k_values, figures_path, dataset_name=dataset_name, file_prefix=file_prefix
+    )
     logger.info(f"All visualizations saved to {figures_path}")
 
 
@@ -554,13 +656,23 @@ def visualize_grid_search(model_dir: str) -> None:
     figures_path = Path(model_dir) / "figures"
     figures_path.mkdir(parents=True, exist_ok=True)
 
+    # Get dataset name and file prefix from config
+    dataset_name = _get_dataset_name()
+    file_prefix = _get_dataset_prefix()
+
     results_path = Path(model_dir) / "grid_search_results.json"
     if not results_path.exists():
         logger.error(f"Grid search results not found: {results_path}. Run `make tune` first.")
         return
 
     logger.info("Generating grid search visualizations...")
-    plot_grid_search_results(results_path, figures_path)
+    plot_grid_search_results(
+        results_path,
+        figures_path,
+        dataset_name=dataset_name,
+        model_name=MODEL_NAME,
+        file_prefix=file_prefix,
+    )
     logger.info(f"All visualizations saved to {figures_path}")
 
 

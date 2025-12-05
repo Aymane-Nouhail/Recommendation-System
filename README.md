@@ -123,9 +123,11 @@ where:
 
 ---
 
-## Visualizations (All_Beauty)
+## Visualizations
 
 ### Latent Space (t-SNE)
+
+User embeddings projected via t-SNE, colored by interaction count. Both datasets show meaningful clustering of users with similar activity levels.
 
 <p align="center">
   <img src="assets/all_beauty_latent_tsne.png" width="45%">
@@ -134,6 +136,8 @@ where:
 
 ### Training Curves
 
+Training summaries showing loss convergence, reconstruction vs KL divergence components, and loss ratios over epochs.
+
 <p align="center">
   <img src="assets/all_beauty_training.png" width="45%">
   <img src="assets/appliances_training.png" width="45%">
@@ -141,8 +145,11 @@ where:
 
 ### Hyperparameter Tuning (Grid Search)
 
+Top 10 configurations ranked by NDCG@10. Labels show: L=latent_dim, H=hidden_dims, d=dropout, β=beta.
+
 <p align="center">
-  <img src="assets/all_beauty_gridsearch.png" width="60%">
+  <img src="assets/all_beauty_gridsearch.png" width="45%">
+  <img src="assets/appliances_gridsearch.png" width="45%">
 </p>
 
 ---
