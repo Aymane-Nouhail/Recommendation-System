@@ -8,7 +8,6 @@ import argparse
 import json
 import logging
 import pickle
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,9 +17,6 @@ import torch.optim as optim
 from scipy.sparse import csr_matrix
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-
-sys.path.append(str(Path(__file__).parent.parent.parent))
-sys.path.append(str(Path(__file__).parent.parent))
 
 from ml.model import HybridVAE, create_hybrid_vae, vae_loss_function
 from preprocessing.embeddings import load_embeddings

@@ -9,7 +9,6 @@ import argparse
 import json
 import logging
 import pickle
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -20,7 +19,6 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from tqdm import tqdm
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.config import config
 
 logging.basicConfig(level=logging.INFO)

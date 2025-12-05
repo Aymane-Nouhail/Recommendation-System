@@ -7,9 +7,7 @@ Hybrid VAE model.
 
 import argparse
 import logging
-import os
 import pickle
-import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -19,12 +17,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
-from src.config import config
-
 # Add src to path
-sys.path.append(str(Path(__file__).parent.parent))
-
 from api.schemas import (
     HealthResponse,
     RecommendationItem,
@@ -36,6 +29,7 @@ from api.schemas import (
 from ml.evaluate import load_model_from_checkpoint
 from ml.model import HybridVAE
 from preprocessing.embeddings import load_embeddings
+from src.config import config
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

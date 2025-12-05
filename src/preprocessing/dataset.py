@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import logging
 import pickle
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +17,6 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import LabelEncoder
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.config import config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")

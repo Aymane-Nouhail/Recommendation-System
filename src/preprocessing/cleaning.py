@@ -10,13 +10,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
 import pandas as pd
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.config import config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")

@@ -7,7 +7,6 @@ Implements Recall@K, NDCG@K, and Hit Ratio@K metrics for leave-one-out evaluatio
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,9 +14,6 @@ import pandas as pd
 import torch
 from scipy.sparse import csr_matrix
 from tqdm import tqdm
-
-sys.path.append(str(Path(__file__).parent.parent))
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ml.model import HybridVAE, create_hybrid_vae
 from ml.train import load_training_data

@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import logging
 import pickle
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +16,6 @@ import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.config import config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")

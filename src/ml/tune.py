@@ -9,7 +9,6 @@ import argparse
 import itertools
 import json
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,9 +20,6 @@ import torch.optim as optim
 from scipy.sparse import csr_matrix
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-sys.path.append(str(Path(__file__).parent.parent.parent))
-sys.path.append(str(Path(__file__).parent.parent))
 
 from ml.evaluate import hit_ratio_at_k, ndcg_at_k, recall_at_k
 from ml.model import create_hybrid_vae, vae_loss_function

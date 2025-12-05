@@ -7,7 +7,6 @@ Implements: Popularity, Item-KNN, SVD, Mult-VAE, and LightGCN.
 import argparse
 import json
 import logging
-import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -21,9 +20,6 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
-
-sys.path.append(str(Path(__file__).parent.parent))
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ml.evaluate import hit_ratio_at_k, ndcg_at_k, recall_at_k
 from ml.train import load_training_data
