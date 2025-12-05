@@ -1,295 +1,169 @@
 """
 Data preprocessing module for Amazon Reviews dataset.
 
-This module handles loading, cleaning, and preprocessing of JSONL Amazon Reviews data.
-It creates the item_text field by combining title and review text for SBERT embedding.
+Handles loading, cleaning, and preprocessing of JSONL Amazon Reviews data.
+Creates item_text field by combining title and review text for SBERT embedding.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 from tqdm import tqdm
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.config import config
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger(__name__)
 
 
-def load_jsonl(file_path: str) -> pd.DataFrame:
-    """
-    Load JSONL file into a pandas DataFrame.
+def load_jsonl(file_path: str | Path) -> pd.DataFrame:
+    """Load JSONL file into a DataFrame, skipping malformed lines."""
+    logger.info(f"Loading JSONL from {file_path}")
 
-    Args:
-        file_path: Path to the JSONL file
-
-    Returns:
-        DataFrame containing the loaded data
-    """
-    logger.info(f"Loading JSONL file from {file_path}")
-
-    data = []
-    with open(file_path, "r", encoding="utf-8") as f:
-        for line_num, line in enumerate(tqdm(f, desc="Loading JSONL")):
+    records = []
+    with open(file_path, encoding="utf-8") as f:
+        for i, line in enumerate(tqdm(f, desc="Loading JSONL")):
             try:
-                data.append(json.loads(line.strip()))
+                records.append(json.loads(line))
             except json.JSONDecodeError as e:
-                logger.warning(f"Skipping malformed JSON at line {line_num + 1}: {e}")
-                continue
+                logger.warning(f"Skipping malformed JSON at line {i + 1}: {e}")
 
-    df = pd.DataFrame(data)
-    logger.info(f"Loaded {len(df)} records")
+    df = pd.DataFrame(records)
+    logger.info(f"Loaded {len(df):,} records")
     return df
 
 
-def validate_required_fields(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Validate that required fields exist in the dataset.
+def validate_and_select_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate required fields exist and select them."""
+    required = ["user_id", "asin", "rating", "title", "text", "timestamp"]
+    missing = set(required) - set(df.columns)
 
-    Args:
-        df: Input DataFrame
+    if missing:
+        raise ValueError(f"Missing required fields: {missing}")
 
-    Returns:
-        DataFrame with validated fields
-    """
-    required_fields = ["user_id", "asin", "rating", "title", "text", "timestamp"]
-
-    # Check if all required fields exist
-    missing_fields = set(required_fields) - set(df.columns)
-    if missing_fields:
-        raise ValueError(f"Missing required fields: {missing_fields}")
-
-    logger.info("All required fields present in dataset")
-    return df[required_fields]
+    logger.info("All required fields present")
+    return df[required].copy()
 
 
-def clean_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean missing values from the dataset.
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove rows with missing critical fields, fill text fields."""
+    initial_size = len(df)
 
-    Args:
-        df: Input DataFrame
+    # Drop rows missing critical fields
+    df = df.dropna(subset=["user_id", "asin", "rating"])
 
-    Returns:
-        Cleaned DataFrame
-    """
-    logger.info(f"Dataset shape before cleaning: {df.shape}")
-
-    # Log missing values per column
-    missing_counts = df.isnull().sum()
-    for col, count in missing_counts.items():
-        if count > 0:
-            logger.info(f"Missing values in {col}: {count} ({count/len(df)*100:.2f}%)")
-
-    # Remove rows with missing critical fields
-    critical_fields = ["user_id", "asin", "rating"]
-    df_clean = df.dropna(subset=critical_fields)
-
-    # Fill missing text fields with empty strings
-    text_fields = ["title", "text"]
-    for field in text_fields:
-        df_clean[field] = df_clean[field].fillna("")
-
-    logger.info(f"Dataset shape after cleaning: {df_clean.shape}")
-    logger.info(f"Removed {len(df) - len(df_clean)} rows with missing critical fields")
-
-    return df_clean
-
-
-def build_item_text(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build item_text field by combining title and review text.
-
-    Args:
-        df: Input DataFrame
-
-    Returns:
-        DataFrame with added item_text column
-    """
-    logger.info("Building item_text field from title and review text")
-
-    # Combine title and text with a separator
-    df["item_text"] = df["title"].astype(str) + " " + df["text"].astype(str)
-
-    # Clean up extra whitespace
-    df["item_text"] = df["item_text"].str.strip().str.replace(r"\s+", " ", regex=True)
-
-    # Log statistics
-    avg_length = df["item_text"].str.len().mean()
-    logger.info(f"Average item_text length: {avg_length:.1f} characters")
-
-    return df
-
-
-def filter_data(
-    df: pd.DataFrame, min_user_interactions: int = 5, min_item_interactions: int = 5
-) -> pd.DataFrame:
-    """
-    Filter data to remove users and items with too few interactions.
-
-    Args:
-        df: Input DataFrame
-        min_user_interactions: Minimum number of interactions per user
-        min_item_interactions: Minimum number of interactions per item
-
-    Returns:
-        Filtered DataFrame
-    """
-    logger.info(
-        f"Filtering data (min_user: {min_user_interactions}, min_item: {min_item_interactions})"
-    )
-    logger.info(f"Initial dataset size: {len(df)} interactions")
-
-    # Iteratively filter users and items until convergence
-    prev_size = 0
-    iteration = 0
-
-    while len(df) != prev_size and iteration < 10:
-        prev_size = len(df)
-        iteration += 1
-
-        # Filter users with enough interactions
-        user_counts = df["user_id"].value_counts()
-        valid_users = user_counts[user_counts >= min_user_interactions].index
-        df = df[df["user_id"].isin(valid_users)]
-
-        # Filter items with enough interactions
-        item_counts = df["asin"].value_counts()
-        valid_items = item_counts[item_counts >= min_item_interactions].index
-        df = df[df["asin"].isin(valid_items)]
-
-        logger.info(
-            f"Iteration {iteration}: {len(df)} interactions, "
-            f"{df['user_id'].nunique()} users, {df['asin'].nunique()} items"
-        )
+    # Fill missing text with empty string
+    df["title"] = df["title"].fillna("")
+    df["text"] = df["text"].fillna("")
 
     logger.info(
-        f"Final filtered dataset: {len(df)} interactions, "
-        f"{df['user_id'].nunique()} users, {df['asin'].nunique()} items"
+        f"Cleaned: {initial_size:,} -> {len(df):,} rows ({initial_size - len(df):,} removed)"
     )
-
     return df
 
 
-def convert_ratings_to_binary(df: pd.DataFrame, threshold: float = 4.0) -> pd.DataFrame:
-    """
-    Convert ratings to binary (1 for relevant, 0 for not relevant).
+def add_derived_fields(df: pd.DataFrame, rating_threshold: float = 4.0) -> pd.DataFrame:
+    """Add item_text and binary_rating fields."""
+    # Combine title + text for embeddings
+    df["item_text"] = (df["title"].astype(str) + " " + df["text"].astype(str)).str.strip()
+    df["item_text"] = df["item_text"].str.replace(r"\s+", " ", regex=True)
 
-    Args:
-        df: Input DataFrame
-        threshold: Rating threshold (>= threshold -> 1, < threshold -> 0)
-
-    Returns:
-        DataFrame with binary ratings
-    """
-    logger.info(f"Converting ratings to binary with threshold {threshold}")
-
-    # Convert rating to numeric if it's not already
+    # Binary rating (positive if >= threshold)
     df["rating"] = pd.to_numeric(df["rating"], errors="coerce")
-
-    # Remove rows with invalid ratings
     df = df.dropna(subset=["rating"])
+    df["binary_rating"] = (df["rating"] >= rating_threshold).astype(int)
 
-    # Convert to binary
-    df["binary_rating"] = (df["rating"] >= threshold).astype(int)
+    logger.info(f"Positive ratio: {df['binary_rating'].mean():.1%}")
+    logger.info(f"Avg item_text length: {df['item_text'].str.len().mean():.0f} chars")
+    return df
 
-    # Log statistics
-    positive_ratio = df["binary_rating"].mean()
-    logger.info(f"Positive interaction ratio: {positive_ratio:.3f}")
 
+def filter_by_interactions(
+    df: pd.DataFrame,
+    min_user: int = 5,
+    min_item: int = 5,
+    max_iterations: int = 10,
+) -> pd.DataFrame:
+    """Iteratively filter users/items with insufficient interactions."""
+    logger.info(f"Filtering (min_user={min_user}, min_item={min_item})")
+
+    for i in range(max_iterations):
+        prev_size = len(df)
+
+        # Filter users
+        user_counts = df["user_id"].value_counts()
+        df = df[df["user_id"].isin(user_counts[user_counts >= min_user].index)]
+
+        # Filter items
+        item_counts = df["asin"].value_counts()
+        df = df[df["asin"].isin(item_counts[item_counts >= min_item].index)]
+
+        if len(df) == prev_size:
+            logger.info(f"Converged after {i + 1} iterations")
+            break
+
+        logger.debug(f"Iter {i + 1}: {len(df):,} interactions")
+
+    n_users, n_items = df["user_id"].nunique(), df["asin"].nunique()
+    sparsity = 1 - len(df) / (n_users * n_items) if n_users * n_items > 0 else 0
+
+    logger.info(f"Final: {len(df):,} interactions, {n_users:,} users, {n_items:,} items")
+    logger.info(f"Sparsity: {sparsity:.4f}")
     return df
 
 
 def preprocess_amazon_reviews(
-    input_path: str,
-    output_path: str,
+    input_path: str | Path,
+    output_path: str | Path,
     min_user_interactions: int = 5,
     min_item_interactions: int = 5,
     rating_threshold: float = 4.0,
-) -> None:
+) -> pd.DataFrame:
     """
     Main preprocessing pipeline for Amazon Reviews dataset.
 
     Args:
         input_path: Path to input JSONL file
-        output_path: Path to save processed data
+        output_path: Path to save processed data (without extension)
         min_user_interactions: Minimum interactions per user
         min_item_interactions: Minimum interactions per item
         rating_threshold: Threshold for binary rating conversion
+
+    Returns:
+        Processed DataFrame
     """
-    # Load raw data
     df = load_jsonl(input_path)
+    df = validate_and_select_fields(df)
+    df = clean_data(df)
+    df = add_derived_fields(df, rating_threshold)
+    df = filter_by_interactions(df, min_user_interactions, min_item_interactions)
 
-    # Validate required fields
-    df = validate_required_fields(df)
+    # Save outputs
+    output_path = Path(output_path)
+    df.to_csv(output_path.with_suffix(".csv"), index=False)
+    df.to_json(output_path.with_suffix(".jsonl"), orient="records", lines=True)
 
-    # Clean missing values
-    df = clean_missing_values(df)
-
-    # Build item text
-    df = build_item_text(df)
-
-    # Convert ratings to binary
-    df = convert_ratings_to_binary(df, rating_threshold)
-
-    # Filter data
-    df = filter_data(df, min_user_interactions, min_item_interactions)
-
-    # Save processed data
-    logger.info(f"Saving processed data to {output_path}")
-
-    # Save as both CSV and JSONL for flexibility
-    output_path_path = Path(output_path)
-
-    # Save as CSV
-    csv_path = output_path_path.with_suffix(".csv")
-    df.to_csv(csv_path, index=False)
-    logger.info(f"Saved CSV to {csv_path}")
-
-    # Save as JSONL
-    jsonl_path = output_path_path.with_suffix(".jsonl")
-    df.to_json(jsonl_path, orient="records", lines=True)
-    logger.info(f"Saved JSONL to {jsonl_path}")
-
-    # Print final statistics
-    logger.info("\nFinal Dataset Statistics:")
-    logger.info(f"  Total interactions: {len(df):,}")
-    logger.info(f"  Unique users: {df['user_id'].nunique():,}")
-    logger.info(f"  Unique items: {df['asin'].nunique():,}")
-    logger.info(f"  Positive interactions: {df['binary_rating'].sum():,}")
-    logger.info(f"  Sparsity: {1 - len(df) / (df['user_id'].nunique() * df['asin'].nunique()):.4f}")
+    logger.info(
+        f"Saved to {output_path.with_suffix('.csv')} and {output_path.with_suffix('.jsonl')}"
+    )
+    return df
 
 
-def main():
-    """Main function for command-line usage."""
+def main() -> None:
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description="Preprocess Amazon Reviews dataset")
-    parser.add_argument("--input", default=config.RAW_DATA_FILE, help="Input JSONL file path")
+    parser.add_argument("--input", default=config.RAW_DATA_FILE, help="Input JSONL file")
     parser.add_argument("--output", default=config.PROCESSED_DATA_FILE, help="Output file path")
-    parser.add_argument(
-        "--min-user-interactions",
-        type=int,
-        default=5,
-        help="Minimum interactions per user (default: 5)",
-    )
-    parser.add_argument(
-        "--min-item-interactions",
-        type=int,
-        default=5,
-        help="Minimum interactions per item (default: 5)",
-    )
-    parser.add_argument(
-        "--rating-threshold",
-        type=float,
-        default=4.0,
-        help="Rating threshold for binary conversion (default: 4.0)",
-    )
+    parser.add_argument("--min-user-interactions", type=int, default=5)
+    parser.add_argument("--min-item-interactions", type=int, default=5)
+    parser.add_argument("--rating-threshold", type=float, default=4.0)
 
     args = parser.parse_args()
 

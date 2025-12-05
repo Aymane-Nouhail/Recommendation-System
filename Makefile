@@ -14,7 +14,7 @@ EMBEDDINGS_DIR = embeddings
 SRC_DIR = src
 
 # Default targets
-all: preprocess train evaluate baseline visualize
+all: preprocess tune train-best evaluate baseline visualize
 
 # Clean all generated files
 clean:
@@ -43,10 +43,34 @@ preprocess:
 	@echo "Step 3: Computing item embeddings..."
 	$(PYTHON) $(SRC_DIR)/preprocessing/embeddings.py --input $(DATA_DIR)/cleaned_reviews.jsonl --output $(EMBEDDINGS_DIR)/item_embeddings.npy --model $(EMBEDDING_MODEL)
 
-# Train the model
+# Train with manually specified hyperparameters
 train:
-	@echo "Training model..."
-	$(PYTHON) $(SRC_DIR)/ml/train.py --data $(DATA_DIR)/ --embeddings $(EMBEDDINGS_DIR)/item_embeddings.npy --output $(MODELS_DIR)/ --epochs 20 --latent-dim 128 --hidden-dims 512 --dropout 0.3 --beta 0.1 --learning-rate 0.001
+	@echo "Training model with default hyperparameters..."
+	$(PYTHON) $(SRC_DIR)/ml/train.py --data $(DATA_DIR)/ --embeddings $(EMBEDDINGS_DIR)/item_embeddings.npy --output $(MODELS_DIR)/ --epochs 20 --latent-dim 128 --hidden-dims 512 --dropout 0.3 --beta 0.2 --learning-rate 0.001
+
+# Train with best hyperparameters from tuning (reads from grid_search_results.json)
+train-best:
+	@echo "Training model with best hyperparameters from tuning..."
+	@mkdir -p $(MODELS_DIR)/figures
+	$(PYTHON) -c "\
+import json; \
+cfg = json.load(open('$(MODELS_DIR)/figures/grid_search_results.json'))['best_config']; \
+hd = ' '.join(map(str, cfg['hidden_dims'])); \
+print(f\"Best config: latent={cfg['latent_dim']}, hidden={hd}, dropout={cfg['dropout']}, beta={cfg['beta']}, lr={cfg['learning_rate']}\")"
+	@$(PYTHON) -c "\
+import json, subprocess, sys; \
+cfg = json.load(open('$(MODELS_DIR)/figures/grid_search_results.json'))['best_config']; \
+cmd = ['$(PYTHON)', '$(SRC_DIR)/ml/train.py', \
+       '--data', '$(DATA_DIR)/', \
+       '--embeddings', '$(EMBEDDINGS_DIR)/item_embeddings.npy', \
+       '--output', '$(MODELS_DIR)/', \
+       '--epochs', '20', \
+       '--latent-dim', str(cfg['latent_dim']), \
+       '--hidden-dims'] + [str(h) for h in cfg['hidden_dims']] + [\
+       '--dropout', str(cfg['dropout']), \
+       '--beta', str(cfg['beta']), \
+       '--learning-rate', str(cfg['learning_rate'])]; \
+sys.exit(subprocess.call(cmd))"
 
 # Evaluate the model (negative sampling protocol - default 99 negatives)
 evaluate:
@@ -61,12 +85,12 @@ evaluate-full:
 # Run all baseline models with negative sampling (Popularity, Item-KNN, SVD)
 baseline:
 	@echo "Running all baseline models with negative sampling (99 negatives)..."
-	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --model all --n-negatives 99
+	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --n-negatives 99
 
 # Run all baseline models with full ranking
 baseline-full:
 	@echo "Running all baseline models with full ranking..."
-	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --model all --n-negatives 0
+	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --n-negatives 0
 
 # Generate all visualizations (training + baseline + tuning)
 visualize: visualize-training visualize-baseline visualize-tuning
