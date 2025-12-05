@@ -32,3 +32,14 @@ class HealthResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
+
+
+class UserInfo(BaseModel):
+    user_id: str = Field(..., description="User ID")
+    interaction_count: int = Field(..., description="Number of interactions")
+
+
+class UsersResponse(BaseModel):
+    users: List[UserInfo] = Field(..., description="List of users with interaction counts")
+    total: int = Field(..., description="Total number of users")
+    returned: int = Field(..., description="Number of users returned")

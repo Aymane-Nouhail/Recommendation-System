@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.config import config
@@ -29,6 +30,8 @@ from api.schemas import (
     RecommendationItem,
     RecommendationRequest,
     RecommendationResponse,
+    UserInfo,
+    UsersResponse,
 )
 from ml.evaluate import load_model_from_checkpoint
 from ml.model import HybridVAE
@@ -54,6 +57,12 @@ app = FastAPI(
 )
 
 
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root to API docs."""
+    return RedirectResponse(url="/docs")
+
+
 # Dependency to check if model is loaded
 def get_model():
     if model is None:
@@ -73,9 +82,45 @@ async def health_check():
     )
 
 
+@app.get("/users", response_model=UsersResponse)
+async def get_users(n: Optional[int] = 5):
+    """
+    Get list of available user IDs sorted by activity (most interactions first).
+
+    Args:
+        n: Number of users to return (default 5, None for all users)
+
+    Returns:
+        List of users with interaction counts, sorted by most active
+    """
+    # Get interaction counts per user from the interaction matrix
+    user_interactions = []
+    for user_id, user_idx in user_to_idx.items():
+        if interaction_matrix is not None:
+            count = int(interaction_matrix[user_idx].sum())
+        else:
+            count = 0
+        user_interactions.append((user_id, count))
+
+    # Sort by interaction count descending
+    user_interactions.sort(key=lambda x: x[1], reverse=True)
+
+    # Apply limit
+    if n is not None:
+        user_interactions = user_interactions[:n]
+
+    users = [UserInfo(user_id=uid, interaction_count=cnt) for uid, cnt in user_interactions]
+
+    return UsersResponse(
+        users=users,
+        total=len(user_to_idx),
+        returned=len(users),
+    )
+
+
 @app.post("/recommend", response_model=RecommendationResponse)
 async def get_recommendations(
-    request: RecommendationRequest, _model: HybridVAE = Depends(get_model)
+    request: RecommendationRequest, vae_model: HybridVAE = Depends(get_model)
 ):
     """
     Generate recommendations for a user.
@@ -108,10 +153,10 @@ async def get_recommendations(
             )
 
             # Get user embedding
-            user_embedding = model.get_user_embedding(user_vector)
+            user_embedding = vae_model.get_user_embedding(user_vector)
 
             # Get item scores
-            scores = model.decode(user_embedding)
+            scores = vae_model.decode(user_embedding)
             scores = scores.squeeze().cpu().numpy()
 
             # Exclude seen items if requested
@@ -227,7 +272,7 @@ async def get_batch_recommendations(
     user_ids: List[str],
     top_k: int = 10,
     exclude_seen: bool = True,
-    _model: HybridVAE = Depends(get_model),
+    vae_model: HybridVAE = Depends(get_model),
 ):
     """
     Generate recommendations for multiple users.
@@ -248,7 +293,7 @@ async def get_batch_recommendations(
     for user_id in user_ids:
         try:
             request = RecommendationRequest(user_id=user_id, top_k=top_k, exclude_seen=exclude_seen)
-            response = await get_recommendations(request, _model)
+            response = await get_recommendations(request, vae_model)
             results[user_id] = response.recommendations
         except HTTPException as e:
             results[user_id] = {"error": e.detail}
@@ -348,9 +393,9 @@ def main():
     parser.add_argument("--port", type=int, default=config.API_PORT, help="Port to bind to")
     parser.add_argument(
         "--device",
-        choices=["cpu", "cuda"],
-        default="cpu",
-        help="Device to use for inference",
+        choices=["cpu", "cuda", "mps", "auto"],
+        default="auto",
+        help="Device to use for inference (auto detects best available)",
     )
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes")
 

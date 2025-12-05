@@ -52,6 +52,7 @@ HybridVAE improves over LightGCN by **12.7%** on the sparse *All_Beauty* dataset
 
 
 <summary><b>All_Beauty (22,363 users, 12,101 items)</b></summary>
+<br>
 
 | Model         | Recall@5 | Recall@10 | Recall@20 | NDCG@5 | NDCG@10 | NDCG@20 |
 | ------------- | :------: | :-------: | :-------: | :----: | :-----: | :-----: |
@@ -61,9 +62,10 @@ HybridVAE improves over LightGCN by **12.7%** on the sparse *All_Beauty* dataset
 | Mult-VAE      |   0.149  |   0.227   |   0.342   |  0.145 |  0.178  |  0.214  |
 | Item-KNN      |   0.117  |   0.189   |   0.299   |  0.120 |  0.152  |  0.189  |
 | Popularity    |   0.076  |   0.131   |   0.219   |  0.080 |  0.104  |  0.134  |
-
+<br>
 
 <summary><b>Appliances (2,072 users, 890 items)</b></summary>
+<br>
 
 | Model         | Recall@5 | Recall@10 | Recall@20 | NDCG@5 | NDCG@10 | NDCG@20 |
 | ------------- | :------: | :-------: | :-------: | :----: | :-----: | :-----: |
@@ -121,7 +123,7 @@ where:
 
 ---
 
-## Visualizations
+## Visualizations (All_Beauty)
 
 ### Latent Space (t-SNE)
 
@@ -204,7 +206,9 @@ Early stopping with patience=2.
 ```bash
 git clone https://github.com/Aymane-Nouhail/Recommendation-System.git
 cd Recommendation-System
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install .
 ```
 
 Dependencies include PyTorch, sentence-transformers, scikit-learn, scipy, and surprise.
