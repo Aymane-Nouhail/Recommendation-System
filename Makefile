@@ -54,12 +54,12 @@ train-best:
 	@mkdir -p $(MODELS_DIR)/figures
 	$(PYTHON) -c "\
 import json; \
-cfg = json.load(open('$(MODELS_DIR)/figures/grid_search_results.json'))['best_config']; \
+cfg = json.load(open('$(MODELS_DIR)/grid_search_results.json'))['best_config']; \
 hd = ' '.join(map(str, cfg['hidden_dims'])); \
 print(f\"Best config: latent={cfg['latent_dim']}, hidden={hd}, dropout={cfg['dropout']}, beta={cfg['beta']}, lr={cfg['learning_rate']}\")"
 	@$(PYTHON) -c "\
 import json, subprocess, sys; \
-cfg = json.load(open('$(MODELS_DIR)/figures/grid_search_results.json'))['best_config']; \
+cfg = json.load(open('$(MODELS_DIR)/grid_search_results.json'))['best_config']; \
 cmd = ['$(PYTHON)', '$(SRC_DIR)/ml/train.py', \
        '--data', '$(DATA_DIR)/', \
        '--embeddings', '$(EMBEDDINGS_DIR)/item_embeddings.npy', \
