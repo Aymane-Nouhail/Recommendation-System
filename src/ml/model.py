@@ -40,6 +40,7 @@ class HybridVAE(nn.Module):
         hidden_dims: Optional[list] = None,
         dropout: float = 0.5,
         beta: float = 0.2,
+        freeze_embeddings: bool = True,
     ):
         """
         Initialize the Hybrid VAE model.
@@ -51,6 +52,7 @@ class HybridVAE(nn.Module):
             hidden_dims: List of hidden layer dimensions for encoder
             dropout: Dropout rate for regularization
             beta: Weight for KL divergence in the loss function
+            freeze_embeddings: Whether to freeze SBERT embeddings (recommended)
         """
         super(HybridVAE, self).__init__()
 
@@ -65,10 +67,12 @@ class HybridVAE(nn.Module):
 
         self.hidden_dims = hidden_dims
 
-        # Convert item embeddings to PyTorch tensor and make them trainable
-        # This allows fine-tuning the SBERT embeddings to the recommendation task
-        self.item_embeddings = nn.Parameter(torch.FloatTensor(item_embeddings))
+        # Item embeddings - use buffer for frozen, parameter for trainable
         self.embedding_dim = item_embeddings.shape[1]
+        if freeze_embeddings:
+            self.register_buffer("item_embeddings", torch.FloatTensor(item_embeddings))
+        else:
+            self.item_embeddings = nn.Parameter(torch.FloatTensor(item_embeddings))
 
         logger.info("Initializing HybridVAE:")
         logger.info(f"  Items: {n_items}")
@@ -76,31 +80,40 @@ class HybridVAE(nn.Module):
         logger.info(f"  Embedding dimensions: {self.embedding_dim}")
         logger.info(f"  Hidden dimensions: {hidden_dims}")
         logger.info(f"  Beta (KL weight): {beta}")
+        logger.info(f"  Embeddings frozen: {freeze_embeddings}")
 
         # Build encoder layers
         self._build_encoder()
 
-        # Projection layer if latent dim doesn't match embedding dim
+        # Projection layer: always exists (Identity if dimensions match)
         if self.latent_dim != self.embedding_dim:
-            self.projection_layer = nn.Linear(self.latent_dim, self.embedding_dim)
-            logger.info(f"  Added projection layer: {self.latent_dim} -> {self.embedding_dim}")
+            self.projection_layer = nn.Sequential(
+                nn.Linear(self.latent_dim, self.embedding_dim),
+                nn.GELU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.embedding_dim, self.embedding_dim),
+            )
+            logger.info(f"  Added projection MLP: {self.latent_dim} -> {self.embedding_dim}")
+        else:
+            self.projection_layer = nn.Identity()
 
         # Initialize weights
         self._init_weights()
 
     def _build_encoder(self):
-        """Build the encoder network."""
+        """Build the encoder network with LayerNorm and GELU activation."""
         encoder_layers = []
 
         # Input dimension is number of items (user interaction vector)
         in_dim = self.n_items
 
-        # Hidden layers
+        # Hidden layers with LayerNorm and GELU (modern architecture)
         for hidden_dim in self.hidden_dims:
             encoder_layers.extend(
                 [
                     nn.Linear(in_dim, hidden_dim),
-                    nn.Tanh(),  # Tanh activation as commonly used in VAE for collaborative filtering
+                    nn.LayerNorm(hidden_dim),
+                    nn.GELU(),  # Modern activation, better than Tanh
                     nn.Dropout(self.dropout),
                 ]
             )
@@ -114,11 +127,11 @@ class HybridVAE(nn.Module):
         self.fc_logvar = nn.Linear(in_dim, self.latent_dim)
 
     def _init_weights(self):
-        """Initialize model weights."""
+        """Initialize model weights using He initialization for GELU."""
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                # Xavier initialization for linear layers
-                nn.init.xavier_normal_(module.weight)
+                # He initialization works well with GELU
+                nn.init.kaiming_normal_(module.weight, nonlinearity="relu")
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
 
@@ -132,9 +145,6 @@ class HybridVAE(nn.Module):
         Returns:
             Tuple of (mu, logvar) tensors
         """
-        # Apply input dropout (denoising)
-        x = F.dropout(x, p=self.dropout, training=self.training)
-
         # Pass through encoder
         h = self.encoder(x)
 
@@ -181,17 +191,8 @@ class HybridVAE(nn.Module):
         Returns:
             Item scores (batch_size x n_items)
         """
-        # Project latent representation to embedding space
-        # This creates a user representation in the same space as item embeddings
-        user_embedding = z  # z is already in the right dimension
-
-        # Compute similarity with all item embeddings (dot product)
-        # item_embeddings: (n_items x embedding_dim)
-        # user_embedding: (batch_size x latent_dim)
-        # We need to ensure dimensions match
-
-        if hasattr(self, "projection_layer"):
-            user_embedding = self.projection_layer(user_embedding)
+        # Project to embedding space (Identity if dimensions already match)
+        user_embedding = self.projection_layer(z)
 
         # Compute scores as dot product: (batch_size x embedding_dim) @ (embedding_dim x n_items)
         scores = torch.matmul(user_embedding, self.item_embeddings.t())
@@ -275,21 +276,17 @@ def vae_loss_function(
     Returns:
         Tuple of (total_loss, reconstruction_loss, kl_loss)
     """
-    # Reconstruction loss (Binary Cross Entropy with logits)
-    # Only compute loss on positive interactions to handle implicit feedback
-    # recon_loss = F.binary_cross_entropy_with_logits(
-    #     recon_x, x, reduction='sum'
-    # )
-
-    # Alternative: Multinomial likelihood for ranking
-    # This treats the problem as learning to rank items
-    recon_loss = -torch.sum(x * F.log_softmax(recon_x, dim=-1))
+    # Reconstruction loss: Multinomial likelihood for ranking (implicit feedback)
+    # Sum over items per user, then average over batch
+    recon_loss = -torch.mean(torch.sum(x * F.log_softmax(recon_x, dim=-1), dim=-1))
 
     # KL divergence: KL(q(z|x) || p(z)) where p(z) = N(0,I)
-    # KL = 0.5 * sum(1 + log(σ²) - μ² - σ²)
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    # Formula: -0.5 * sum(1 + log(σ²) - μ² - σ²)
+    # Sum over latent dimensions per user, then average over batch
+    batch_size = x.size(0)
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
 
-    # Total loss
+    # Total loss: weighted combination
     total_loss = recon_loss + beta * kl_loss
 
     return total_loss, recon_loss, kl_loss
@@ -345,6 +342,7 @@ def create_hybrid_vae(
     dropout: float = 0.5,
     beta: float = 0.2,
     use_annealing: bool = False,
+    freeze_embeddings: bool = True,
     **annealing_kwargs,
 ) -> HybridVAE:
     """
@@ -358,6 +356,7 @@ def create_hybrid_vae(
         dropout: Dropout rate
         beta: KL divergence weight
         use_annealing: Whether to use beta annealing
+        freeze_embeddings: Whether to freeze SBERT embeddings (recommended)
         **annealing_kwargs: Additional arguments for annealing
 
     Returns:
@@ -371,6 +370,7 @@ def create_hybrid_vae(
             hidden_dims=hidden_dims,
             dropout=dropout,
             beta=beta,
+            freeze_embeddings=freeze_embeddings,
             **annealing_kwargs,
         )
     else:
@@ -381,4 +381,5 @@ def create_hybrid_vae(
             hidden_dims=hidden_dims,
             dropout=dropout,
             beta=beta,
+            freeze_embeddings=freeze_embeddings,
         )
