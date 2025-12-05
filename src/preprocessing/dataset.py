@@ -5,17 +5,18 @@ This module handles creating user-item interaction matrices and train/validation
 using leave-one-out methodology for evaluation.
 """
 
-import pandas as pd
-import numpy as np
-import pickle
 import argparse
+import logging
+import os
+import pickle
+import sys
 from pathlib import Path
 from typing import Tuple
-from sklearn.preprocessing import LabelEncoder
+
+import numpy as np
+import pandas as pd
 from scipy.sparse import csr_matrix
-import logging
-import sys
-import os
+from sklearn.preprocessing import LabelEncoder
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.config import config
@@ -52,18 +53,12 @@ class DatasetBuilder:
         self.item_encoder.fit(df["asin"])
 
         # Create mapping dictionaries for faster lookup
-        self.user_to_idx = {
-            user: idx for idx, user in enumerate(self.user_encoder.classes_)
-        }
-        self.item_to_idx = {
-            item: idx for idx, item in enumerate(self.item_encoder.classes_)
-        }
+        self.user_to_idx = {user: idx for idx, user in enumerate(self.user_encoder.classes_)}
+        self.item_to_idx = {item: idx for idx, item in enumerate(self.item_encoder.classes_)}
         self.idx_to_user = {idx: user for user, idx in self.user_to_idx.items()}
         self.idx_to_item = {idx: item for item, idx in self.item_to_idx.items()}
 
-        logger.info(
-            f"Encoded {len(self.user_to_idx)} users and {len(self.item_to_idx)} items"
-        )
+        logger.info(f"Encoded {len(self.user_to_idx)} users and {len(self.item_to_idx)} items")
 
     def create_interaction_matrix(self, df: pd.DataFrame) -> csr_matrix:
         """
@@ -84,9 +79,7 @@ class DatasetBuilder:
         # Handle any unmapped values (should not happen if encoders are fitted properly)
         valid_mask = user_indices.notna() & item_indices.notna()
         if not valid_mask.all():
-            logger.warning(
-                f"Found {(~valid_mask).sum()} interactions with unmapped users/items"
-            )
+            logger.warning(f"Found {(~valid_mask).sum()} interactions with unmapped users/items")
             df = df[valid_mask]
             user_indices = user_indices[valid_mask]
             item_indices = item_indices[valid_mask]
@@ -103,9 +96,7 @@ class DatasetBuilder:
         )
 
         logger.info(f"Created interaction matrix of shape {interaction_matrix.shape}")
-        logger.info(
-            f"Matrix density: {interaction_matrix.nnz / (n_users * n_items):.6f}"
-        )
+        logger.info(f"Matrix density: {interaction_matrix.nnz / (n_users * n_items):.6f}")
 
         return interaction_matrix
 
@@ -120,46 +111,41 @@ class DatasetBuilder:
         - Validation set: Second most recent interaction
         - Training set: All other interactions
 
+        Optimized using vectorized operations instead of per-user loops.
+
         Args:
             df: DataFrame with user interactions
 
         Returns:
             Tuple of (train_df, val_df, test_df)
         """
-        logger.info("Creating leave-one-out train/validation/test splits")
+        logger.info("Creating leave-one-out train/validation/test splits (optimized)")
 
         # Sort by timestamp to get chronological order
-        df_sorted = df.sort_values(["user_id", "timestamp"])
+        df_sorted = df.sort_values(["user_id", "timestamp"]).reset_index(drop=True)
 
-        train_data = []
-        val_data = []
-        test_data = []
+        # Add reverse rank within each user group (last item = rank 1, second to last = rank 2, etc.)
+        df_sorted["_rank"] = df_sorted.groupby("user_id").cumcount(ascending=False) + 1
 
-        for user_id, user_df in df_sorted.groupby("user_id"):
-            user_interactions = user_df.reset_index(drop=True)
-            n_interactions = len(user_interactions)
+        # Count interactions per user
+        user_counts = df_sorted.groupby("user_id").size()
+        df_sorted["_user_count"] = df_sorted["user_id"].map(user_counts)
 
-            if n_interactions >= 3:
-                # Split: train (all but last 2), val (second to last), test (last)
-                train_data.append(user_interactions.iloc[:-2])
-                val_data.append(user_interactions.iloc[-2:-1])
-                test_data.append(user_interactions.iloc[-1:])
-            elif n_interactions == 2:
-                # Split: train (first), test (last), no validation
-                train_data.append(user_interactions.iloc[:-1])
-                test_data.append(user_interactions.iloc[-1:])
-            else:
-                # Only one interaction: put in training set
-                train_data.append(user_interactions)
+        # Vectorized split logic:
+        # - Test: rank == 1 (most recent) AND user has >= 2 interactions
+        # - Val: rank == 2 (second most recent) AND user has >= 3 interactions
+        # - Train: everything else
 
-        # Combine all splits
+        test_mask = (df_sorted["_rank"] == 1) & (df_sorted["_user_count"] >= 2)
+        val_mask = (df_sorted["_rank"] == 2) & (df_sorted["_user_count"] >= 3)
+        train_mask = ~test_mask & ~val_mask
+
+        # Extract splits and drop helper columns
         train_df = (
-            pd.concat(train_data, ignore_index=True) if train_data else pd.DataFrame()
+            df_sorted[train_mask].drop(columns=["_rank", "_user_count"]).reset_index(drop=True)
         )
-        val_df = pd.concat(val_data, ignore_index=True) if val_data else pd.DataFrame()
-        test_df = (
-            pd.concat(test_data, ignore_index=True) if test_data else pd.DataFrame()
-        )
+        val_df = df_sorted[val_mask].drop(columns=["_rank", "_user_count"]).reset_index(drop=True)
+        test_df = df_sorted[test_mask].drop(columns=["_rank", "_user_count"]).reset_index(drop=True)
 
         logger.info(
             f"Split sizes - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}"
@@ -178,6 +164,8 @@ class DatasetBuilder:
         """
         Create negative samples for training (items not interacted with by users).
 
+        Optimized version using vectorized NumPy operations and pre-computed lookups.
+
         Args:
             df: Positive interactions DataFrame
             interaction_matrix: User-item interaction matrix
@@ -187,57 +175,67 @@ class DatasetBuilder:
             DataFrame with negative samples added
         """
         logger.info(
-            f"Creating negative samples ({n_negatives_per_positive} per positive)"
+            f"Creating negative samples ({n_negatives_per_positive} per positive) - optimized"
         )
 
-        negative_samples = []
         n_items = len(self.item_to_idx)
+        all_items = np.arange(n_items)
 
-        for user_id in df["user_id"].unique():
+        # Pre-compute: count positives per user (vectorized)
+        user_positive_counts = df.groupby("user_id").size().to_dict()
+        unique_users = list(user_positive_counts.keys())
+
+        logger.info(f"Processing {len(unique_users)} users...")
+
+        # Pre-compute user interaction sets from sparse matrix (much faster than DataFrame filtering)
+        user_item_sets = {}
+        for user_id in unique_users:
             user_idx = self.user_to_idx[user_id]
+            user_item_sets[user_id] = set(interaction_matrix[user_idx].indices)
 
-            # Get items this user has interacted with
-            user_items = set(interaction_matrix[user_idx].nonzero()[1])
+        # Batch sample all negatives
+        negative_data = {
+            "user_id": [],
+            "asin": [],
+            "binary_rating": [],
+            "timestamp": [],
+            "rating": [],
+            "title": [],
+            "text": [],
+            "item_text": [],
+        }
 
-            # Get items this user has NOT interacted with
-            all_items = set(range(n_items))
-            candidate_items = list(all_items - user_items)
-
-            if not candidate_items:
-                continue
-
-            # Count positive interactions for this user in current DataFrame
-            n_positives = len(df[df["user_id"] == user_id])
+        for user_id in unique_users:
+            user_items = user_item_sets[user_id]
+            n_positives = user_positive_counts[user_id]
             n_negatives = n_positives * n_negatives_per_positive
 
+            # Fast set difference using NumPy mask
+            mask = np.ones(n_items, dtype=bool)
+            mask[list(user_items)] = False
+            candidate_items = all_items[mask]
+
+            if len(candidate_items) == 0:
+                continue
+
             # Sample negative items
-            if len(candidate_items) >= n_negatives:
-                negative_item_indices = np.random.choice(
-                    candidate_items, size=n_negatives, replace=False
-                )
-            else:
-                negative_item_indices = np.random.choice(
-                    candidate_items, size=n_negatives, replace=True
-                )
+            replace = len(candidate_items) < n_negatives
+            negative_item_indices = np.random.choice(
+                candidate_items, size=n_negatives, replace=replace
+            )
 
-            # Convert back to item IDs
-            for item_idx in negative_item_indices:
-                item_id = self.idx_to_item[item_idx]
-                negative_samples.append(
-                    {
-                        "user_id": user_id,
-                        "asin": item_id,
-                        "binary_rating": 0,
-                        "timestamp": 0,  # Dummy timestamp
-                        "rating": 0,  # Dummy rating
-                        "title": "",  # Dummy title
-                        "text": "",  # Dummy text
-                        "item_text": "",  # Dummy item_text
-                    }
-                )
+            # Batch append (much faster than individual appends)
+            negative_data["user_id"].extend([user_id] * n_negatives)
+            negative_data["asin"].extend([self.idx_to_item[idx] for idx in negative_item_indices])
+            negative_data["binary_rating"].extend([0] * n_negatives)
+            negative_data["timestamp"].extend([0] * n_negatives)
+            negative_data["rating"].extend([0] * n_negatives)
+            negative_data["title"].extend([""] * n_negatives)
+            negative_data["text"].extend([""] * n_negatives)
+            negative_data["item_text"].extend([""] * n_negatives)
 
-        # Create DataFrame with negative samples
-        negatives_df = pd.DataFrame(negative_samples)
+        # Create DataFrame from pre-built lists (single allocation)
+        negatives_df = pd.DataFrame(negative_data)
 
         # Combine positive and negative samples
         combined_df = pd.concat([df, negatives_df], ignore_index=True)

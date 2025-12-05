@@ -11,12 +11,13 @@ Architecture:
 - Loss: Reconstruction loss + β * KL divergence
 """
 
+import logging
+from typing import Optional, Tuple
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from typing import Tuple, Optional
-import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -69,7 +70,7 @@ class HybridVAE(nn.Module):
         self.item_embeddings = nn.Parameter(torch.FloatTensor(item_embeddings))
         self.embedding_dim = item_embeddings.shape[1]
 
-        logger.info(f"Initializing HybridVAE:")
+        logger.info("Initializing HybridVAE:")
         logger.info(f"  Items: {n_items}")
         logger.info(f"  Latent dimensions: {latent_dim}")
         logger.info(f"  Embedding dimensions: {self.embedding_dim}")
@@ -82,9 +83,7 @@ class HybridVAE(nn.Module):
         # Projection layer if latent dim doesn't match embedding dim
         if self.latent_dim != self.embedding_dim:
             self.projection_layer = nn.Linear(self.latent_dim, self.embedding_dim)
-            logger.info(
-                f"  Added projection layer: {self.latent_dim} -> {self.embedding_dim}"
-            )
+            logger.info(f"  Added projection layer: {self.latent_dim} -> {self.embedding_dim}")
 
         # Initialize weights
         self._init_weights()
@@ -199,9 +198,7 @@ class HybridVAE(nn.Module):
 
         return scores
 
-    def forward(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass through the VAE.
 

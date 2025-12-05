@@ -5,20 +5,21 @@ This module handles the training loop with mini-batch users, loss tracking,
 and model checkpointing.
 """
 
-import torch
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-import pandas as pd
-import numpy as np
-import pickle
-import json
 import argparse
+import json
+import logging
+import pickle
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-from tqdm import tqdm
-import logging
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.optim as optim
 from scipy.sparse import csr_matrix
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -27,7 +28,7 @@ from src.config import config
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from ml.model import HybridVAE, vae_loss_function, create_hybrid_vae
+from ml.model import HybridVAE, create_hybrid_vae, vae_loss_function
 from preprocessing.embeddings import load_embeddings
 
 # Set up logging
@@ -42,9 +43,7 @@ class UserInteractionDataset(Dataset):
     Each sample is a user's interaction vector (binary vector over all items).
     """
 
-    def __init__(
-        self, interaction_matrix: csr_matrix, user_indices: Optional[List[int]] = None
-    ):
+    def __init__(self, interaction_matrix: csr_matrix, user_indices: Optional[List[int]] = None):
         """
         Initialize the dataset.
 
@@ -54,9 +53,7 @@ class UserInteractionDataset(Dataset):
         """
         self.interaction_matrix = interaction_matrix
         self.user_indices = (
-            user_indices
-            if user_indices is not None
-            else list(range(interaction_matrix.shape[0]))
+            user_indices if user_indices is not None else list(range(interaction_matrix.shape[0]))
         )
 
     def __len__(self) -> int:
@@ -149,9 +146,7 @@ class VAETrainer:
             # Compute loss
             if hasattr(self.model, "compute_loss"):
                 # For annealed VAE
-                loss, recon_loss, kl_loss = self.model.compute_loss(
-                    recon_x, x, mu, logvar
-                )
+                loss, recon_loss, kl_loss = self.model.compute_loss(recon_x, x, mu, logvar)
                 self.model.step_annealing()
             else:
                 # For regular VAE
@@ -304,9 +299,7 @@ def load_training_data(
     return interaction_matrix, train_df, val_df, mappings
 
 
-def get_user_indices_from_df(
-    df: pd.DataFrame, user_to_idx: Dict[str, int]
-) -> List[int]:
+def get_user_indices_from_df(df: pd.DataFrame, user_to_idx: Dict[str, int]) -> List[int]:
     """
     Get user indices from DataFrame.
 
@@ -318,9 +311,7 @@ def get_user_indices_from_df(
         List of unique user indices
     """
     user_ids = df["user_id"].unique()
-    user_indices = [
-        user_to_idx[user_id] for user_id in user_ids if user_id in user_to_idx
-    ]
+    user_indices = [user_to_idx[user_id] for user_id in user_ids if user_id in user_to_idx]
     return user_indices
 
 
@@ -362,7 +353,12 @@ def train_hybrid_vae(
     """
     # Set device
     if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
     else:
         device = torch.device(device)
 
@@ -391,32 +387,22 @@ def train_hybrid_vae(
     cols = train_positives["asin"].map(item_to_idx)
     data = np.ones(len(train_positives))
 
-    train_interaction_matrix = csr_matrix(
-        (data, (rows, cols)), shape=full_interaction_matrix.shape
-    )
+    train_interaction_matrix = csr_matrix((data, (rows, cols)), shape=full_interaction_matrix.shape)
 
     # Reconstruct validation matrix
     logger.info("Reconstructing validation matrix from val_df...")
     val_positives = (
-        val_df[val_df["binary_rating"] == 1]
-        if "binary_rating" in val_df.columns
-        else val_df
+        val_df[val_df["binary_rating"] == 1] if "binary_rating" in val_df.columns else val_df
     )
     rows = val_positives["user_id"].map(user_to_idx)
     cols = val_positives["asin"].map(item_to_idx)
     data = np.ones(len(val_positives))
-    val_interaction_matrix = csr_matrix(
-        (data, (rows, cols)), shape=full_interaction_matrix.shape
-    )
+    val_interaction_matrix = csr_matrix((data, (rows, cols)), shape=full_interaction_matrix.shape)
 
     # Load item embeddings
     embeddings_path_obj = Path(embeddings_path)
-    mappings_path = embeddings_path_obj.with_name(
-        embeddings_path_obj.stem + "_mappings.pkl"
-    )
-    embeddings, item_to_idx, idx_to_item = load_embeddings(
-        embeddings_path, str(mappings_path)
-    )
+    mappings_path = embeddings_path_obj.with_name(embeddings_path_obj.stem + "_mappings.pkl")
+    embeddings, item_to_idx, idx_to_item = load_embeddings(embeddings_path, str(mappings_path))
 
     # Validate embeddings match dataset
     assert (
@@ -434,12 +420,8 @@ def train_hybrid_vae(
     train_dataset = UserInteractionDataset(train_interaction_matrix, train_user_indices)
     val_dataset = UserInteractionDataset(val_interaction_matrix, val_user_indices)
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=0
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=0
-    )
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     # Calculate annealing steps (anneal over 50% of epochs)
     total_steps = len(train_loader) * epochs
@@ -458,9 +440,7 @@ def train_hybrid_vae(
         anneal_steps=anneal_steps,
     )
 
-    logger.info(
-        f"Created model with {sum(p.numel() for p in model.parameters()):,} parameters"
-    )
+    logger.info(f"Created model with {sum(p.numel() for p in model.parameters()):,} parameters")
 
     # Initialize trainer
     trainer = VAETrainer(model, device, learning_rate, weight_decay)
@@ -569,12 +549,8 @@ def main():
         default=[config.HIDDEN_DIM],
         help="Hidden layer dimensions",
     )
-    parser.add_argument(
-        "--batch-size", type=int, default=config.BATCH_SIZE, help="Batch size"
-    )
-    parser.add_argument(
-        "--epochs", type=int, default=config.EPOCHS, help="Number of epochs"
-    )
+    parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=config.EPOCHS, help="Number of epochs")
     parser.add_argument(
         "--learning-rate",
         type=float,
@@ -584,12 +560,8 @@ def main():
     parser.add_argument("--weight-decay", type=float, default=0.0, help="Weight decay")
     parser.add_argument("--beta", type=float, default=0.2, help="KL divergence weight")
     parser.add_argument("--dropout", type=float, default=0.5, help="Dropout rate")
-    parser.add_argument(
-        "--use-annealing", action="store_true", help="Use beta annealing"
-    )
-    parser.add_argument(
-        "--patience", type=int, default=20, help="Early stopping patience"
-    )
+    parser.add_argument("--use-annealing", action="store_true", help="Use beta annealing")
+    parser.add_argument("--patience", type=int, default=20, help="Early stopping patience")
     parser.add_argument("--device", choices=["cuda", "cpu"], help="Device to use")
     parser.add_argument(
         "--ignore-embeddings",

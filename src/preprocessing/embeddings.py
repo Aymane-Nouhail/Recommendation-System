@@ -5,17 +5,18 @@ This module handles encoding item text (title + review text) into dense vector
 representations using the pre-trained SBERT model "all-MiniLM-L6-v2".
 """
 
-import pandas as pd
-import numpy as np
-import pickle
 import argparse
+import logging
+import os
+import pickle
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from sentence_transformers import SentenceTransformer
-import logging
+
+import numpy as np
+import pandas as pd
 import torch
-import sys
-import os
+from sentence_transformers import SentenceTransformer
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.config import config
@@ -30,9 +31,7 @@ class ItemEmbeddingGenerator:
     Generator for creating item text embeddings using SBERT.
     """
 
-    def __init__(
-        self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None
-    ):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None):
         """
         Initialize the embedding generator.
 
@@ -41,9 +40,7 @@ class ItemEmbeddingGenerator:
             device: Device to run the model on ('cuda', 'cpu', or None for auto)
         """
         self.model_name = model_name
-        self.device = (
-            device if device else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
 
         logger.info(f"Initializing SBERT model: {model_name}")
         logger.info(f"Using device: {self.device}")
@@ -141,17 +138,13 @@ class ItemEmbeddingGenerator:
         logger.info("Creating item embeddings from dataset")
 
         # Get unique items and their texts
-        unique_items = df[[item_id_column, text_column]].drop_duplicates(
-            subset=[item_id_column]
-        )
+        unique_items = df[[item_id_column, text_column]].drop_duplicates(subset=[item_id_column])
         unique_items = unique_items.sort_values(item_id_column).reset_index(drop=True)
 
         logger.info(f"Found {len(unique_items)} unique items")
 
         # Create item mappings
-        item_to_idx = {
-            item: idx for idx, item in enumerate(unique_items[item_id_column])
-        }
+        item_to_idx = {item: idx for idx, item in enumerate(unique_items[item_id_column])}
         idx_to_item = {idx: item for item, idx in item_to_idx.items()}
 
         # Extract texts for encoding
@@ -161,12 +154,8 @@ class ItemEmbeddingGenerator:
         embeddings = self.encode_texts(item_texts, batch_size=batch_size)
 
         # Validate embeddings
-        assert len(embeddings) == len(
-            unique_items
-        ), "Mismatch in embeddings and items count"
-        assert (
-            embeddings.shape[1] == self.embedding_dim
-        ), "Unexpected embedding dimension"
+        assert len(embeddings) == len(unique_items), "Mismatch in embeddings and items count"
+        assert embeddings.shape[1] == self.embedding_dim, "Unexpected embedding dimension"
 
         logger.info(f"Created embedding matrix of shape: {embeddings.shape}")
 
@@ -315,9 +304,7 @@ def compute_item_embeddings(
 
 def main():
     """Main function for command-line usage."""
-    parser = argparse.ArgumentParser(
-        description="Compute item text embeddings using SBERT"
-    )
+    parser = argparse.ArgumentParser(description="Compute item text embeddings using SBERT")
     parser.add_argument(
         "--input",
         default=config.PROCESSED_DATA_FILE,

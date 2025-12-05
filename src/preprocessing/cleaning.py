@@ -5,14 +5,15 @@ This module handles loading, cleaning, and preprocessing of JSONL Amazon Reviews
 It creates the item_text field by combining title and review text for SBERT embedding.
 """
 
-import json
-import pandas as pd
 import argparse
-from pathlib import Path
-from tqdm import tqdm
+import json
 import logging
-import sys
 import os
+import sys
+from pathlib import Path
+
+import pandas as pd
+from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.config import config
@@ -258,25 +259,19 @@ def preprocess_amazon_reviews(
     logger.info(f"Saved JSONL to {jsonl_path}")
 
     # Print final statistics
-    logger.info(f"\nFinal Dataset Statistics:")
+    logger.info("\nFinal Dataset Statistics:")
     logger.info(f"  Total interactions: {len(df):,}")
     logger.info(f"  Unique users: {df['user_id'].nunique():,}")
     logger.info(f"  Unique items: {df['asin'].nunique():,}")
     logger.info(f"  Positive interactions: {df['binary_rating'].sum():,}")
-    logger.info(
-        f"  Sparsity: {1 - len(df) / (df['user_id'].nunique() * df['asin'].nunique()):.4f}"
-    )
+    logger.info(f"  Sparsity: {1 - len(df) / (df['user_id'].nunique() * df['asin'].nunique()):.4f}")
 
 
 def main():
     """Main function for command-line usage."""
     parser = argparse.ArgumentParser(description="Preprocess Amazon Reviews dataset")
-    parser.add_argument(
-        "--input", default=config.RAW_DATA_FILE, help="Input JSONL file path"
-    )
-    parser.add_argument(
-        "--output", default=config.PROCESSED_DATA_FILE, help="Output file path"
-    )
+    parser.add_argument("--input", default=config.RAW_DATA_FILE, help="Input JSONL file path")
+    parser.add_argument("--output", default=config.PROCESSED_DATA_FILE, help="Output file path")
     parser.add_argument(
         "--min-user-interactions",
         type=int,

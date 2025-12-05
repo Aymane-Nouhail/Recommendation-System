@@ -5,18 +5,19 @@ This module contains helper functions for data loading, model management,
 and common operations used throughout the system.
 """
 
-import torch
+import json
+import logging
+import pickle
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pickle
-import json
+import torch
 import yaml
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any, Union
-import logging
-from scipy.sparse import csr_matrix, save_npz, load_npz
-import shutil
-import matplotlib.pyplot as plt
+from scipy.sparse import csr_matrix, load_npz, save_npz
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -144,7 +145,7 @@ def get_device(preferred_device: Optional[str] = None) -> torch.device:
     Get the best available device for computation.
 
     Args:
-        preferred_device: Preferred device ('cuda' or 'cpu')
+        preferred_device: Preferred device ('cuda', 'mps', or 'cpu')
 
     Returns:
         PyTorch device
@@ -152,10 +153,22 @@ def get_device(preferred_device: Optional[str] = None) -> torch.device:
     if preferred_device:
         device = torch.device(preferred_device)
         if device.type == "cuda" and not torch.cuda.is_available():
-            logger.warning("CUDA requested but not available, using CPU")
-            device = torch.device("cpu")
+            logger.warning("CUDA requested but not available, falling back")
+            device = None
+        elif device.type == "mps" and not torch.backends.mps.is_available():
+            logger.warning("MPS requested but not available, falling back")
+            device = None
+        else:
+            logger.info(f"Using device: {device}")
+            return device
+
+    # Auto-detect best available device
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
     else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cpu")
 
     logger.info(f"Using device: {device}")
     return device
@@ -247,9 +260,7 @@ def compute_dataset_statistics(df: pd.DataFrame) -> Dict[str, Any]:
     return stats
 
 
-def plot_training_history(
-    history: Dict[str, List[float]], save_path: Optional[str] = None
-) -> None:
+def plot_training_history(history: Dict[str, List[float]], save_path: Optional[str] = None) -> None:
     """
     Plot training history curves.
 
@@ -308,9 +319,7 @@ def plot_training_history(
     plt.show()
 
 
-def plot_dataset_statistics(
-    stats: Dict[str, Any], save_path: Optional[str] = None
-) -> None:
+def plot_dataset_statistics(stats: Dict[str, Any], save_path: Optional[str] = None) -> None:
     """
     Plot dataset statistics.
 
@@ -444,9 +453,7 @@ def validate_data_consistency(data_dir: str) -> Dict[str, bool]:
         test_df = pd.read_csv(data_path / "test.csv")
 
         # Check if all users/items in DataFrames exist in mappings
-        all_users = (
-            set(train_df["user_id"]).union(val_df["user_id"]).union(test_df["user_id"])
-        )
+        all_users = set(train_df["user_id"]).union(val_df["user_id"]).union(test_df["user_id"])
         all_items = set(train_df["asin"]).union(val_df["asin"]).union(test_df["asin"])
 
         results["users_in_mappings"] = all_users.issubset(set(user_to_idx.keys()))
@@ -458,9 +465,7 @@ def validate_data_consistency(data_dir: str) -> Dict[str, bool]:
         test_pairs = set(zip(test_df["user_id"], test_df["asin"]))
 
         results["no_train_val_overlap"] = len(train_pairs.intersection(val_pairs)) == 0
-        results["no_train_test_overlap"] = (
-            len(train_pairs.intersection(test_pairs)) == 0
-        )
+        results["no_train_test_overlap"] = len(train_pairs.intersection(test_pairs)) == 0
         results["no_val_test_overlap"] = len(val_pairs.intersection(test_pairs)) == 0
 
     except Exception as e:
@@ -477,8 +482,8 @@ def memory_usage_info() -> Dict[str, str]:
     Returns:
         Dictionary with memory info
     """
+
     import psutil
-    import gc
 
     # System memory
     memory = psutil.virtual_memory()
@@ -531,9 +536,7 @@ class ExperimentTracker:
 
         self.metrics[name].append(entry)
 
-    def log_metrics(
-        self, metrics_dict: Dict[str, float], step: Optional[int] = None
-    ) -> None:
+    def log_metrics(self, metrics_dict: Dict[str, float], step: Optional[int] = None) -> None:
         """Log multiple metrics."""
         for name, value in metrics_dict.items():
             self.log_metric(name, value, step)
@@ -542,9 +545,7 @@ class ExperimentTracker:
         """Save all metrics to file."""
         save_json(self.metrics, self.experiment_dir / "metrics.json")
 
-    def get_best_metric(
-        self, metric_name: str, maximize: bool = False
-    ) -> Tuple[float, int]:
+    def get_best_metric(self, metric_name: str, maximize: bool = False) -> Tuple[float, int]:
         """Get best value for a metric."""
         if metric_name not in self.metrics:
             raise ValueError(f"Metric '{metric_name}' not found")

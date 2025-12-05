@@ -5,14 +5,15 @@ This module implements evaluation metrics including Recall@K and NDCG@K
 for leave-one-out test methodology.
 """
 
-import torch
-import numpy as np
-import pandas as pd
 import argparse
+import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import logging
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+import torch
 from scipy.sparse import csr_matrix
 from tqdm import tqdm
 
@@ -21,8 +22,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ml.model import HybridVAE, create_hybrid_vae
-from preprocessing.embeddings import load_embeddings
 from ml.train import load_training_data
+from preprocessing.embeddings import load_embeddings
 from src.config import config
 
 # Set up logging
@@ -30,9 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def recall_at_k(
-    recommended_items: np.ndarray, relevant_items: np.ndarray, k: int
-) -> float:
+def recall_at_k(recommended_items: np.ndarray, relevant_items: np.ndarray, k: int) -> float:
     """
     Calculate Recall@K for a single user.
 
@@ -57,9 +56,7 @@ def recall_at_k(
     return hits / len(relevant_items)
 
 
-def ndcg_at_k(
-    recommended_items: np.ndarray, relevant_items: np.ndarray, k: int
-) -> float:
+def ndcg_at_k(recommended_items: np.ndarray, relevant_items: np.ndarray, k: int) -> float:
     """
     Calculate NDCG@K for a single user.
 
@@ -95,9 +92,7 @@ def ndcg_at_k(
     return dcg / idcg if idcg > 0 else 0.0
 
 
-def hit_ratio_at_k(
-    recommended_items: np.ndarray, relevant_items: np.ndarray, k: int
-) -> float:
+def hit_ratio_at_k(recommended_items: np.ndarray, relevant_items: np.ndarray, k: int) -> float:
     """
     Calculate Hit Ratio@K for a single user.
 
@@ -148,6 +143,7 @@ class RecommendationEvaluator:
         # Create reverse mappings
         self.idx_to_user = {idx: user for user, idx in user_to_idx.items()}
         self.idx_to_item = {idx: item for item, idx in item_to_idx.items()}
+        self.n_items = interaction_matrix.shape[1]
 
         self.model.eval()
 
@@ -155,7 +151,7 @@ class RecommendationEvaluator:
         self, user_idx: int, top_k: int = 100, exclude_seen: bool = True
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Get recommendations for a single user.
+        Get recommendations for a single user (FULL RANKING protocol).
 
         Args:
             user_idx: User index
@@ -191,8 +187,154 @@ class RecommendationEvaluator:
 
             return top_indices, top_scores
 
+    def evaluate_user_with_negatives(
+        self,
+        user_idx: int,
+        test_item_idx: int,
+        n_negatives: int = 99,
+        k_values: List[int] | None = None,
+    ) -> Dict[int, Dict[str, float]]:
+        """
+        Evaluate a single user using NEGATIVE SAMPLING protocol.
+
+        Ranks the test item against n_negatives randomly sampled items
+        that the user hasn't interacted with (standard NCF protocol).
+
+        Args:
+            user_idx: User index
+            test_item_idx: The positive test item index
+            n_negatives: Number of negative samples (default: 99 for 100 total candidates)
+            k_values: List of k values for evaluation
+
+        Returns:
+            Dictionary of metrics for different k values
+        """
+        if k_values is None:
+            k_values = [5, 10, 20]
+
+        with torch.no_grad():
+            # Get items the user has interacted with (to exclude from negatives)
+            seen_items = set(self.interaction_matrix[user_idx].indices)
+
+            # Sample negative items (items user hasn't seen, excluding test item)
+            all_items = np.arange(self.n_items)
+            candidate_mask = np.ones(self.n_items, dtype=bool)
+            candidate_mask[list(seen_items)] = False
+            candidate_mask[test_item_idx] = False  # Don't sample test item as negative
+
+            available_negatives = all_items[candidate_mask]
+
+            if len(available_negatives) < n_negatives:
+                # If not enough negatives, use all available
+                negative_items = available_negatives
+            else:
+                negative_items = np.random.choice(
+                    available_negatives, size=n_negatives, replace=False
+                )
+
+            # Candidate set = 1 positive + n negatives
+            candidate_items = np.concatenate([[test_item_idx], negative_items])
+
+            # Get user interaction vector
+            user_vector = (
+                torch.FloatTensor(self.interaction_matrix[user_idx].toarray().flatten())
+                .unsqueeze(0)
+                .to(self.device)
+            )
+
+            # Get user embedding and decode to get all item scores
+            user_embedding = self.model.get_user_embedding(user_vector)
+            all_scores = self.model.decode(user_embedding).squeeze().cpu().numpy()
+
+            # Get scores only for candidate items
+            candidate_scores = all_scores[candidate_items]
+
+            # Rank candidates by score (descending)
+            ranked_indices = np.argsort(candidate_scores)[::-1]
+            ranked_items = candidate_items[ranked_indices]
+
+            # The test item is relevant
+            relevant_items = np.array([test_item_idx])
+
+            # Calculate metrics
+            metrics = {}
+            for k in k_values:
+                metrics[k] = {
+                    "recall": recall_at_k(ranked_items, relevant_items, k),
+                    "ndcg": ndcg_at_k(ranked_items, relevant_items, k),
+                    "hit_ratio": hit_ratio_at_k(ranked_items, relevant_items, k),
+                }
+
+            return metrics
+
+    def evaluate_dataset_with_negatives(
+        self,
+        test_df: pd.DataFrame,
+        n_negatives: int = 99,
+        k_values: List[int] | None = None,
+    ) -> Dict[int, Dict[str, float]]:
+        """
+        Evaluate the model using NEGATIVE SAMPLING protocol (standard NCF evaluation).
+
+        For each user, ranks the test item against n_negatives random items.
+        This is the standard protocol used in NCF, BERT4Rec, and most RecSys papers.
+
+        Args:
+            test_df: Test DataFrame with user-item interactions
+            n_negatives: Number of negative samples per user (default: 99)
+            k_values: List of k values for evaluation
+
+        Returns:
+            Dictionary of averaged metrics
+        """
+        if k_values is None:
+            k_values = [5, 10, 20]
+
+        logger.info(f"Evaluating with NEGATIVE SAMPLING protocol ({n_negatives} negatives)...")
+
+        # Collect metrics for all users
+        all_metrics = {k: {"recall": [], "ndcg": [], "hit_ratio": []} for k in k_values}
+        evaluated_users = 0
+
+        for _, row in tqdm(test_df.iterrows(), total=len(test_df), desc="Evaluating"):
+            user_id = row["user_id"]
+            item_id = row["asin"]
+
+            # Skip if user or item not in training data
+            if user_id not in self.user_to_idx or item_id not in self.item_to_idx:
+                continue
+
+            user_idx = self.user_to_idx[user_id]
+            test_item_idx = self.item_to_idx[item_id]
+
+            # Evaluate this user
+            user_metrics = self.evaluate_user_with_negatives(
+                user_idx, test_item_idx, n_negatives, k_values
+            )
+
+            evaluated_users += 1
+            for k in k_values:
+                all_metrics[k]["recall"].append(user_metrics[k]["recall"])
+                all_metrics[k]["ndcg"].append(user_metrics[k]["ndcg"])
+                all_metrics[k]["hit_ratio"].append(user_metrics[k]["hit_ratio"])
+
+        # Calculate averages
+        avg_metrics = {}
+        for k in k_values:
+            avg_metrics[k] = {
+                "recall": np.mean(all_metrics[k]["recall"]) if all_metrics[k]["recall"] else 0.0,
+                "ndcg": np.mean(all_metrics[k]["ndcg"]) if all_metrics[k]["ndcg"] else 0.0,
+                "hit_ratio": (
+                    np.mean(all_metrics[k]["hit_ratio"]) if all_metrics[k]["hit_ratio"] else 0.0
+                ),
+            }
+
+        logger.info(f"Evaluated {evaluated_users} users with negative sampling")
+
+        return avg_metrics
+
     def evaluate_user(
-        self, user_id: str, test_items: List[str], k_values: List[int] = [5, 10, 20]
+        self, user_id: str, test_items: List[str], k_values: List[int] | None = None
     ) -> Dict[str, Dict[int, float]]:
         """
         Evaluate recommendations for a single user.
@@ -205,6 +347,9 @@ class RecommendationEvaluator:
         Returns:
             Dictionary of metrics for different k values
         """
+        if k_values is None:
+            k_values = [5, 10, 20]
+
         if user_id not in self.user_to_idx:
             logger.warning(f"User {user_id} not found in training data")
             return {}
@@ -238,7 +383,7 @@ class RecommendationEvaluator:
         return metrics
 
     def evaluate_dataset(
-        self, test_df: pd.DataFrame, k_values: List[int] = [5, 10, 20]
+        self, test_df: pd.DataFrame, k_values: List[int] | None = None
     ) -> Dict[str, Dict[int, float]]:
         """
         Evaluate the model on the test dataset.
@@ -250,6 +395,9 @@ class RecommendationEvaluator:
         Returns:
             Dictionary of averaged metrics
         """
+        if k_values is None:
+            k_values = [5, 10, 20]
+
         logger.info("Evaluating model on test dataset...")
 
         # Group test data by user
@@ -275,18 +423,10 @@ class RecommendationEvaluator:
         avg_metrics = {}
         for k in k_values:
             avg_metrics[k] = {
-                "recall": (
-                    np.mean(all_metrics[k]["recall"])
-                    if all_metrics[k]["recall"]
-                    else 0.0
-                ),
-                "ndcg": (
-                    np.mean(all_metrics[k]["ndcg"]) if all_metrics[k]["ndcg"] else 0.0
-                ),
+                "recall": (np.mean(all_metrics[k]["recall"]) if all_metrics[k]["recall"] else 0.0),
+                "ndcg": (np.mean(all_metrics[k]["ndcg"]) if all_metrics[k]["ndcg"] else 0.0),
                 "hit_ratio": (
-                    np.mean(all_metrics[k]["hit_ratio"])
-                    if all_metrics[k]["hit_ratio"]
-                    else 0.0
+                    np.mean(all_metrics[k]["hit_ratio"]) if all_metrics[k]["hit_ratio"] else 0.0
                 ),
             }
 
@@ -336,8 +476,9 @@ def evaluate_recommendation_model(
     model_path: str,
     data_dir: str,
     embeddings_path: str,
-    k_values: List[int] = [5, 10, 20],
+    k_values: List[int] | None = None,
     device: Optional[str] = None,
+    n_negatives: Optional[int] = None,
 ) -> Dict:
     """
     Main evaluation function.
@@ -348,13 +489,22 @@ def evaluate_recommendation_model(
         embeddings_path: Path to item embeddings
         k_values: List of k values for evaluation
         device: Device to use for evaluation
+        n_negatives: Number of negatives for sampling protocol (None = full ranking)
 
     Returns:
         Dictionary with evaluation results
     """
+    if k_values is None:
+        k_values = [5, 10, 20]
+
     # Set device
     if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
     else:
         device = torch.device(device)
 
@@ -376,9 +526,7 @@ def evaluate_recommendation_model(
         else train_df
     )
     val_positives = (
-        val_df[val_df["binary_rating"] == 1]
-        if "binary_rating" in val_df.columns
-        else val_df
+        val_df[val_df["binary_rating"] == 1] if "binary_rating" in val_df.columns else val_df
     )
 
     input_df = pd.concat([train_positives, val_positives])
@@ -413,20 +561,34 @@ def evaluate_recommendation_model(
         device=device,
     )
 
-    # Evaluate
-    results = evaluator.evaluate_dataset(test_df, k_values)
+    # Evaluate using appropriate protocol
+    if n_negatives is not None:
+        # Negative sampling protocol (standard NCF evaluation)
+        protocol_name = f"NEGATIVE SAMPLING ({n_negatives} negatives)"
+        results = evaluator.evaluate_dataset_with_negatives(test_df, n_negatives, k_values)
+    else:
+        # Full ranking protocol (harder, but more realistic)
+        protocol_name = "FULL RANKING (all items)"
+        results = evaluator.evaluate_dataset(test_df, k_values)
 
-    # Print results
-    logger.info("\nEvaluation Results:")
-    logger.info("-" * 50)
+    # Print results in pretty table format
+    logger.info("\n" + "=" * 70)
+    logger.info("HYBRID VAE EVALUATION RESULTS")
+    logger.info(f"Protocol: {protocol_name}")
+    logger.info("=" * 70)
+
+    print("\n" + "-" * 70)
+    print(f"{'K':<5} | {'Recall':>12} | {'NDCG':>12} | {'Hit Ratio':>12}")
+    print("-" * 70)
+
     for k in k_values:
         if k in results:
             metrics = results[k]
-            logger.info(
-                f"@{k:2d}: Recall={metrics['recall']:.4f}, "
-                f"NDCG={metrics['ndcg']:.4f}, "
-                f"Hit Ratio={metrics['hit_ratio']:.4f}"
+            print(
+                f"@{k:<4} | {metrics['recall']:>12.4f} | {metrics['ndcg']:>12.4f} | {metrics['hit_ratio']:>12.4f}"
             )
+
+    print("-" * 70)
 
     return results
 
@@ -434,12 +596,8 @@ def evaluate_recommendation_model(
 def main():
     """Main function for command-line usage."""
     parser = argparse.ArgumentParser(description="Evaluate recommendation model")
-    parser.add_argument(
-        "--model", default=config.MODEL_FILE, help="Path to trained model"
-    )
-    parser.add_argument(
-        "--data", default=str(config.DATA_DIR), help="Directory containing dataset"
-    )
+    parser.add_argument("--model", default=config.MODEL_FILE, help="Path to trained model")
+    parser.add_argument("--data", default=str(config.DATA_DIR), help="Directory containing dataset")
     parser.add_argument(
         "--embeddings", default=config.EMBEDDINGS_FILE, help="Path to item embeddings"
     )
@@ -450,10 +608,19 @@ def main():
         default=[5, 10, 20],
         help="K values for evaluation",
     )
-    parser.add_argument("--device", choices=["cuda", "cpu"], help="Device to use")
+    parser.add_argument("--device", choices=["cuda", "cpu", "mps"], help="Device to use")
     parser.add_argument("--output", help="Path to save evaluation results (JSON)")
+    parser.add_argument(
+        "--n-negatives",
+        type=int,
+        default=99,
+        help="Number of negative samples for evaluation (default: 99 for 100 candidates). Use 0 for full ranking.",
+    )
 
     args = parser.parse_args()
+
+    # Determine evaluation protocol
+    n_negatives = args.n_negatives if args.n_negatives > 0 else None
 
     # Run evaluation
     results = evaluate_recommendation_model(
@@ -462,6 +629,7 @@ def main():
         embeddings_path=args.embeddings,
         k_values=args.k_values,
         device=args.device,
+        n_negatives=n_negatives,
     )
 
     # Save results if requested

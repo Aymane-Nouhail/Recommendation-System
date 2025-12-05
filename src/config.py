@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -21,9 +22,7 @@ class Config:
     MODEL_DIR = BASE_DIR / "models"
     MODEL_FILE = os.getenv("MODEL_FILE", str(MODEL_DIR / "vae_model.pth"))
     ENCODER_FILE = os.getenv("ENCODER_FILE", str(MODEL_DIR / "label_encoders.pkl"))
-    EMBEDDINGS_FILE = os.getenv(
-        "EMBEDDINGS_FILE", str(MODEL_DIR / "item_embeddings.npy")
-    )
+    EMBEDDINGS_FILE = os.getenv("EMBEDDINGS_FILE", str(MODEL_DIR / "item_embeddings.npy"))
 
     # Training hyperparameters
     BATCH_SIZE = int(os.getenv("BATCH_SIZE", 64))

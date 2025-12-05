@@ -41,25 +41,32 @@ preprocess:
 	$(PYTHON) $(SRC_DIR)/preprocessing/dataset.py --input $(DATA_DIR)/cleaned_reviews.jsonl --output $(DATA_DIR)/
 	
 	@echo "Step 3: Computing item embeddings..."
-	$(PYTHON) $(SRC_DIR)/preprocessing/embeddings.py --input $(DATA_DIR)/cleaned_reviews.jsonl --output $(EMBEDDINGS_DIR)/item_embeddings.npy
+	$(PYTHON) $(SRC_DIR)/preprocessing/embeddings.py --input $(DATA_DIR)/cleaned_reviews.jsonl --output $(EMBEDDINGS_DIR)/item_embeddings.npy --model $(EMBEDDING_MODEL)
 
 # Train the model
 train:
 	@echo "Training model..."
 	$(PYTHON) $(SRC_DIR)/ml/train.py --data $(DATA_DIR)/ --embeddings $(EMBEDDINGS_DIR)/item_embeddings.npy --output $(MODELS_DIR)/ --epochs 20 --latent-dim 64 --hidden-dims 256 --use-annealing --dropout 0.5
 
-# Evaluate the model
+# Evaluate the model (negative sampling protocol - default 99 negatives)
 evaluate:
-	@echo "Evaluating model..."
-	$(PYTHON) $(SRC_DIR)/ml/evaluate.py --model $(MODELS_DIR)/best_model.pth --data $(DATA_DIR)/ --embeddings $(EMBEDDINGS_DIR)/item_embeddings.npy
+	@echo "Evaluating model with negative sampling protocol (99 negatives)..."
+	$(PYTHON) $(SRC_DIR)/ml/evaluate.py --model $(MODELS_DIR)/best_model.pth --data $(DATA_DIR)/ --embeddings $(EMBEDDINGS_DIR)/item_embeddings.npy --n-negatives 99
 
-# Run baseline model
+# Evaluate with full ranking protocol (harder)
+evaluate-full:
+	@echo "Evaluating model with full ranking protocol (all items)..."
+	$(PYTHON) $(SRC_DIR)/ml/evaluate.py --model $(MODELS_DIR)/best_model.pth --data $(DATA_DIR)/ --embeddings $(EMBEDDINGS_DIR)/item_embeddings.npy --n-negatives 0
+
+# Run all baseline models with negative sampling (Popularity, Item-KNN, SVD)
 baseline:
-	@echo "Running baseline model (Matrix Factorization)..."
-	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --components 50
-baseline:
-	@echo "Running baseline model..."
-	$(PYTHON) $(SRC_DIR)/ml/baseline.py
+	@echo "Running all baseline models with negative sampling (99 negatives)..."
+	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --model all --n-negatives 99
+
+# Run all baseline models with full ranking
+baseline-full:
+	@echo "Running all baseline models with full ranking..."
+	$(PYTHON) $(SRC_DIR)/ml/baseline.py --data $(DATA_DIR)/ --model all --n-negatives 0
 
 # Run the API server
 run-api:

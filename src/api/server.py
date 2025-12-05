@@ -5,18 +5,18 @@ This module provides a REST API for serving recommendations using the trained
 Hybrid VAE model.
 """
 
-import torch
-import numpy as np
-import pickle
-from fastapi import FastAPI, HTTPException, Depends
-from typing import List, Dict, Optional
-import uvicorn
+import argparse
 import logging
+import os
+import pickle
 import sys
 from pathlib import Path
-import argparse
-import sys
-import os
+from typing import Dict, List, Optional
+
+import numpy as np
+import torch
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.config import config
@@ -24,16 +24,15 @@ from src.config import config
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from api.schemas import (
+    HealthResponse,
+    RecommendationItem,
+    RecommendationRequest,
+    RecommendationResponse,
+)
+from ml.evaluate import load_model_from_checkpoint
 from ml.model import HybridVAE
 from preprocessing.embeddings import load_embeddings
-from ml.evaluate import load_model_from_checkpoint
-from api.schemas import (
-    RecommendationRequest,
-    RecommendationItem,
-    RecommendationResponse,
-    HealthResponse,
-    ErrorResponse,
-)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -129,9 +128,7 @@ async def get_recommendations(
             for item_idx, score in zip(top_indices, top_scores):
                 if item_idx in idx_to_item and not np.isinf(score):
                     recommendations.append(
-                        RecommendationItem(
-                            item_id=idx_to_item[item_idx], score=float(score)
-                        )
+                        RecommendationItem(item_id=idx_to_item[item_idx], score=float(score))
                     )
 
             return RecommendationResponse(
@@ -144,7 +141,7 @@ async def get_recommendations(
         raise
     except Exception as e:
         logger.error(f"Error generating recommendations: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @app.get("/users/{user_id}/profile")
@@ -166,9 +163,7 @@ async def get_user_profile(user_id: str):
     # Get user interactions
     user_interactions = interaction_matrix[user_idx].nonzero()[1]
     interacted_items = [
-        idx_to_item[item_idx]
-        for item_idx in user_interactions
-        if item_idx in idx_to_item
+        idx_to_item[item_idx] for item_idx in user_interactions if item_idx in idx_to_item
     ]
 
     return {
@@ -246,22 +241,18 @@ async def get_batch_recommendations(
         Dictionary mapping user IDs to recommendations
     """
     if len(user_ids) > 100:  # Limit batch size
-        raise HTTPException(
-            status_code=400, detail="Maximum 100 users per batch request"
-        )
+        raise HTTPException(status_code=400, detail="Maximum 100 users per batch request")
 
     results = {}
 
     for user_id in user_ids:
         try:
-            request = RecommendationRequest(
-                user_id=user_id, top_k=top_k, exclude_seen=exclude_seen
-            )
+            request = RecommendationRequest(user_id=user_id, top_k=top_k, exclude_seen=exclude_seen)
             response = await get_recommendations(request, _model)
             results[user_id] = response.recommendations
         except HTTPException as e:
             results[user_id] = {"error": e.detail}
-        except Exception as e:
+        except Exception:
             results[user_id] = {"error": "Internal server error"}
 
     return results
@@ -277,16 +268,27 @@ def load_model_and_data(
         model_path: Path to trained model
         data_dir: Directory containing processed dataset
         embeddings_path: Path to item embeddings
-        device_name: Device to use ('cpu' or 'cuda')
+        device_name: Device to use ('cpu', 'cuda', or 'mps')
     """
     global model, interaction_matrix, user_to_idx, item_to_idx, idx_to_item, device
 
     logger.info("Loading model and data...")
 
     # Set device
-    device = torch.device(
-        device_name if torch.cuda.is_available() or device_name == "cpu" else "cpu"
-    )
+    if device_name == "cuda" and torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif device_name == "mps" and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif device_name == "cpu":
+        device = torch.device("cpu")
+    else:
+        # Auto-detect best available
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
     logger.info(f"Using device: {device}")
 
     # Load data
@@ -311,9 +313,7 @@ def load_model_and_data(
     model = load_model_from_checkpoint(model_path, embeddings, device)
     model.eval()
 
-    logger.info(
-        f"Loaded model with {len(user_to_idx)} users and {len(item_to_idx)} items"
-    )
+    logger.info(f"Loaded model with {len(user_to_idx)} users and {len(item_to_idx)} items")
     logger.info("API ready to serve recommendations!")
 
 
@@ -339,28 +339,20 @@ def create_app(
 def main():
     """Main function to run the API server."""
     parser = argparse.ArgumentParser(description="Run Hybrid VAE Recommendation API")
-    parser.add_argument(
-        "--model", default=config.MODEL_FILE, help="Path to trained model"
-    )
-    parser.add_argument(
-        "--data", default=str(config.DATA_DIR), help="Directory containing dataset"
-    )
+    parser.add_argument("--model", default=config.MODEL_FILE, help="Path to trained model")
+    parser.add_argument("--data", default=str(config.DATA_DIR), help="Directory containing dataset")
     parser.add_argument(
         "--embeddings", default=config.EMBEDDINGS_FILE, help="Path to item embeddings"
     )
     parser.add_argument("--host", default=config.API_HOST, help="Host to bind to")
-    parser.add_argument(
-        "--port", type=int, default=config.API_PORT, help="Port to bind to"
-    )
+    parser.add_argument("--port", type=int, default=config.API_PORT, help="Port to bind to")
     parser.add_argument(
         "--device",
         choices=["cpu", "cuda"],
         default="cpu",
         help="Device to use for inference",
     )
-    parser.add_argument(
-        "--workers", type=int, default=1, help="Number of worker processes"
-    )
+    parser.add_argument("--workers", type=int, default=1, help="Number of worker processes")
 
     args = parser.parse_args()
 
@@ -368,9 +360,7 @@ def main():
     load_model_and_data(args.model, args.data, args.embeddings, args.device)
 
     # Run server
-    uvicorn.run(
-        app, host=args.host, port=args.port, workers=args.workers, log_level="info"
-    )
+    uvicorn.run(app, host=args.host, port=args.port, workers=args.workers, log_level="info")
 
 
 if __name__ == "__main__":
