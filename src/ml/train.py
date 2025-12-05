@@ -285,8 +285,9 @@ def load_training_data(
         interaction_matrix = pickle.load(f)
 
     # Load train and validation DataFrames
-    train_df = pd.read_csv(data_path / "train.csv")
-    val_df = pd.read_csv(data_path / "val.csv")
+    # low_memory=False to avoid mixed type warnings from negative sample columns
+    train_df = pd.read_csv(data_path / "train.csv", low_memory=False)
+    val_df = pd.read_csv(data_path / "val.csv", low_memory=False)
 
     # Load mappings
     with open(data_path / "mappings.pkl", "rb") as f:

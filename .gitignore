@@ -50,3 +50,10 @@ embeddings/*
 
 # Logs
 *.log
+
+# Backups
+backups/
+
+# Old dataset folders
+data_video_games/
+embeddings_video_games/

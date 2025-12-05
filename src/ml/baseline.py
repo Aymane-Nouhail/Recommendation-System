@@ -8,6 +8,7 @@ This module implements multiple baseline recommenders:
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -544,6 +545,17 @@ def run_all_baselines(
         )
 
     print("-" * 75)
+
+    # Save results to JSON for later visualization
+    figures_path = Path(data_dir).parent / "models" / "figures"
+    figures_path.mkdir(parents=True, exist_ok=True)
+
+    results_for_json = {
+        model: {str(k): v for k, v in metrics.items()} for model, metrics in all_results.items()
+    }
+    with open(figures_path / "baseline_results.json", "w") as f:
+        json.dump(results_for_json, f, indent=2)
+    logger.info(f"Saved baseline results to {figures_path / 'baseline_results.json'}")
 
     return all_results
 
