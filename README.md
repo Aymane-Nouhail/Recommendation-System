@@ -1,4 +1,3 @@
-
 # HybridVAE Recommendation System
 
 A hybrid recommendation model that combines collaborative filtering with semantic item representations derived from Sentence-BERT (SBERT). Using a **Variational Autoencoder (VAE)** with a **frozen embedding decoder**, the model effectively integrates text-based item semantics with user–item interaction patterns, providing strong performance on both sparse and dense datasets.
@@ -16,6 +15,7 @@ This repository includes a **fully automated pipeline** covering preprocessing, 
 * [Installation](#installation)
 * [Usage](#usage)
 * [Project Structure](#project-structure)
+* [Testing](#testing)
 * [API](#api)
 * [References](#references)
 * [License](#license)
@@ -100,7 +100,7 @@ z = \mu + \sigma \odot \epsilon, \qquad \epsilon \sim \mathcal{N}(0, I)
 
 ## Decoder (Frozen SBERT Embeddings)
 
-Let (E \in \mathbb{R}^{d \times N_{\text{items}}}) be the fixed matrix of SBERT embeddings.
+Let $E \in \mathbb{R}^{d \times N_{\text{items}}}$ be the fixed matrix of SBERT embeddings.
 
 ```math
 \tilde{z} = W_{\text{proj}} z
@@ -248,10 +248,35 @@ recommendation_system/
 │   ├── preprocessing/
 │   ├── ml/
 │   └── api/
+├── tests/
 ├── Makefile
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+# Testing
+
+The project includes comprehensive test coverage:
+
+```bash
+# Run all tests
+python -m pytest tests/ -v
+
+# Run unit tests only (fast, mock data)
+python -m pytest tests/test_unit.py -v
+
+# Run end-to-end integration test (synthetic data, full pipeline)
+python -m pytest tests/test_e2e_pipeline.py -v -s
+```
+
+| Test File | Description |
+|-----------|-------------|
+| `test_unit.py` | Unit tests for individual components (DatasetBuilder, HybridVAE, VAETrainer) |
+| `test_e2e_pipeline.py` | Full pipeline integration test with synthetic data generation |
+
+The e2e test validates the complete flow: raw data → cleaning → dataset splits → embeddings → training → evaluation → model save/load, all in memory without requiring external files.
 
 ---
 
@@ -260,7 +285,9 @@ recommendation_system/
 Start the server:
 
 ```bash
-python src/api/server.py
+make run-api
+# or
+python -m src.api.server
 ```
 
 ### POST /recommend
