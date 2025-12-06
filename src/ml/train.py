@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import pickle
+import time
 from pathlib import Path
 
 import numpy as np
@@ -274,6 +275,7 @@ def train_hybrid_vae(
     # Training loop
     trainer = VAETrainer(model, dev, learning_rate, weight_decay)
     best_val_loss, patience_counter = float("inf"), 0
+    start_time = time.time()
 
     for epoch in range(epochs):
         logger.info(f"\nEpoch {epoch + 1}/{epochs}")
@@ -322,6 +324,7 @@ def train_hybrid_vae(
             break
 
     # Save history
+    training_time = time.time() - start_time
     with open(output_path / "training_history.json", "w") as f:
         json.dump(
             {
@@ -329,12 +332,14 @@ def train_hybrid_vae(
                 "val_losses": trainer.val_losses,
                 "train_recon_losses": trainer.train_recon_losses,
                 "train_kl_losses": trainer.train_kl_losses,
+                "training_time_seconds": round(training_time, 2),
             },
             f,
             indent=2,
         )
 
     logger.info(f"Training complete! Best val loss: {best_val_loss:.4f}")
+    logger.info(f"Total training time: {training_time:.1f}s")
 
 
 def main() -> None:

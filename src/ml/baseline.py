@@ -7,6 +7,7 @@ Implements: Popularity, Item-KNN, SVD, Mult-VAE, and LightGCN.
 import argparse
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -496,10 +497,15 @@ def run_all_baselines(
     all_results = {}
     for name, model in baselines.items():
         logger.info(f"\n{'='*60}\nTraining {name}\n{'='*60}")
+        start_time = time.time()
         model.fit(input_matrix)
-        all_results[name] = evaluate_model(
+        training_time = round(time.time() - start_time, 2)
+        logger.info(f"{name} training time: {training_time:.1f}s")
+        results = evaluate_model(
             model, name, input_matrix, test_df, user_to_idx, item_to_idx, k_values, n_negatives
         )
+        results["training_time_seconds"] = training_time
+        all_results[name] = results
 
     # Print results
     protocol = f"negative sampling ({n_negatives})" if n_negatives else "full ranking"

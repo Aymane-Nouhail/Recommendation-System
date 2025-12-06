@@ -54,6 +54,9 @@ embeddings/*
 # Backups
 backups/
 
+# Archives
+*.zip
+
 # Old dataset folders
 data_video_games/
 embeddings_video_games/
